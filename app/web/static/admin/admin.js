@@ -30,6 +30,14 @@ const rotateOverlayAccessLabel = document.querySelector(
 const logoutButton = document.querySelector("#logout-button");
 const retryButton = document.querySelector("#retry-button");
 const logoutStatus = document.querySelector("#logout-status");
+const giveawayPreferencesForm = document.querySelector("#giveaway-preferences-form");
+const giveawayCommandPrefix = document.querySelector("#giveaway-command-prefix");
+const giveawayPreferencesStatus = document.querySelector("#giveaway-preferences-status");
+const giveawayHistoryList = document.querySelector("#giveaway-history-list");
+const giveawayHistoryMore = document.querySelector("#giveaway-history-more");
+const giveawayHistoryDetail = document.querySelector("#giveaway-history-detail");
+const giveawayHistoryStatus = document.querySelector("#giveaway-history-status");
+let giveawayHistoryCursor = null;
 
 const OVERLAY_LINK_STORAGE_KEY = "necsus:giveaway:overlay-link:v1";
 let overlayAccessConfigured = false;
@@ -207,6 +215,80 @@ rotateOverlayAccessButton.addEventListener("click", async () => {
     }
   }
 });
+
+giveawayPreferencesForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  giveawayPreferencesStatus.textContent = "Enregistrement…";
+  try {
+    const response = await fetch("/api/admin/plugins/giveaway/preferences", {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ command_prefix: giveawayCommandPrefix.value }),
+    });
+    if (response.status === 401) return showDisconnectedState();
+    if (!response.ok) throw new Error("Unable to save preferences");
+    giveawayPreferencesStatus.textContent = "Préfixe enregistré.";
+  } catch {
+    giveawayPreferencesStatus.textContent = "Impossible d’enregistrer le préfixe.";
+  }
+});
+
+function appendHistoryItem(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "button button-secondary";
+  button.textContent = `${item.lot} · ${item.status} · ${item.participant_count} participant(s)`;
+  button.addEventListener("click", async () => {
+    giveawayHistoryStatus.textContent = "Chargement du détail…";
+    giveawayHistoryDetail.replaceChildren();
+    try {
+      const response = await fetch(
+        `/api/admin/plugins/giveaway/history/${encodeURIComponent(item.id)}`,
+        { credentials: "same-origin", headers: { Accept: "application/json" } },
+      );
+      if (response.status === 401) return showDisconnectedState();
+      if (!response.ok) throw new Error("Unable to load giveaway detail");
+      const detail = await response.json();
+      const heading = document.createElement("h4");
+      heading.textContent = `Participants — ${detail.lot}`;
+      const participants = document.createElement("p");
+      participants.textContent = detail.participants.map((person) => person.display_name).join(", ") || "Aucun participant";
+      const winners = document.createElement("p");
+      winners.textContent = `Gagnants : ${detail.winners.map((winner) => winner.display_name).join(", ") || "aucun"}`;
+      giveawayHistoryDetail.append(heading, participants, winners);
+      giveawayHistoryStatus.textContent = "";
+    } catch {
+      giveawayHistoryStatus.textContent = "Impossible de charger ce détail.";
+    }
+  });
+  giveawayHistoryList.append(button);
+}
+
+async function loadGiveawayHistory(cursor = null) {
+  giveawayHistoryStatus.textContent = "Chargement de l’historique…";
+  const params = new URLSearchParams({ limit: "25" });
+  if (cursor) {
+    params.set("before", cursor.before);
+    params.set("before_id", cursor.before_id);
+  }
+  try {
+    const response = await fetch(`/api/admin/plugins/giveaway/history?${params}`, {
+      credentials: "same-origin", headers: { Accept: "application/json" },
+    });
+    if (response.status === 401) return showDisconnectedState();
+    if (!response.ok) throw new Error("Unable to load giveaway history");
+    const data = await response.json();
+    for (const item of data.items) appendHistoryItem(item);
+    giveawayHistoryCursor = data.next_cursor;
+    giveawayHistoryMore.hidden = !giveawayHistoryCursor;
+    giveawayHistoryStatus.textContent = data.items.length ? "" : "Aucun giveaway dans l’historique.";
+  } catch {
+    giveawayHistoryStatus.textContent = "Impossible de charger l’historique.";
+  }
+}
+
+giveawayHistoryMore.addEventListener("click", () => loadGiveawayHistory(giveawayHistoryCursor));
 
 retryButton.addEventListener("click", () => {
   window.location.reload();
@@ -411,7 +493,14 @@ async function loadAdminSession() {
 
     const data = await response.json();
     showConnectedState(data);
-    await loadOverlayAccessStatus();
+    await Promise.all([
+      loadOverlayAccessStatus(),
+      fetch("/api/admin/plugins/giveaway/preferences", { headers: { Accept: "application/json" } })
+        .then((response) => response.ok ? response.json() : Promise.reject())
+        .then((preferences) => { giveawayCommandPrefix.value = preferences.command_prefix; })
+        .catch(() => { giveawayPreferencesStatus.textContent = "Préférences indisponibles."; }),
+      loadGiveawayHistory(),
+    ]);
   } catch {
     showErrorState();
   }

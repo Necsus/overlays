@@ -13,12 +13,11 @@ from app.application.overlay_access import (
 from app.domain.giveaway import GiveawayEngine
 from app.infrastructure.database import Database, DatabaseError
 from app.infrastructure.overlay_access import resolve_overlay_access_key
-from app.infrastructure.streamers import load_active_streamer
 from app.web.websocket import OverlayConnectionManager
 
 
 def create_overlay_router(
-    engine: GiveawayEngine,
+    engines: dict[str, GiveawayEngine],
     connections: OverlayConnectionManager,
     static_directory: Path,
 ) -> APIRouter:
@@ -28,36 +27,24 @@ def create_overlay_router(
     def overlay() -> FileResponse:
         return FileResponse(static_directory / "overlay.html")
 
-    async def serve_registered_overlay(websocket: WebSocket) -> None:
-        try:
-            await connections.send_state(
-                websocket,
-                engine.overlay_snapshot(),
-            )
-
-            while True:
-                _ = await websocket.receive_text()
-        except (RuntimeError, WebSocketDisconnect):
-            connections.disconnect(websocket)
-
     async def authenticate_giveaway_overlay(
         websocket: WebSocket,
-    ) -> bool:
+    ) -> str | None:
         await websocket.accept()
 
         try:
             async with asyncio.timeout(5):
                 message: object = await websocket.receive_json()
         except WebSocketDisconnect:
-            return False
+            return None
         except (TimeoutError, ValueError):
             await websocket.close(code=1008)
-            return False
+            return None
 
         token = parse_overlay_authentication(message)
         if token is None:
             await websocket.close(code=1008)
-            return False
+            return None
 
         token_hash = hash_overlay_token(token)
         database = cast(Database, websocket.app.state.database)
@@ -68,27 +55,27 @@ def create_overlay_router(
                     plugin_slug=GIVEAWAY_PLUGIN_SLUG,
                     token_hash=token_hash,
                 )
-                active_streamer = await load_active_streamer(database)
             except DatabaseError:
                 await websocket.close(code=1011)
-                return False
+                return None
 
-            if (
-                streamer_id is None
-                or active_streamer is None
-                or streamer_id != active_streamer.twitch_user_id
-            ):
+            if streamer_id is None or streamer_id not in engines:
                 await websocket.close(code=1008)
-                return False
+                return None
 
             connections.register(websocket, streamer_id=streamer_id)
-        return True
+        return streamer_id
 
     @router.websocket("/plugins/giveaway/ws")
     async def giveaway_overlay_websocket(websocket: WebSocket) -> None:
-        if not await authenticate_giveaway_overlay(websocket):
+        streamer_id = await authenticate_giveaway_overlay(websocket)
+        if streamer_id is None:
             return
-
-        await serve_registered_overlay(websocket)
+        try:
+            await connections.send_state(websocket, engines[streamer_id].overlay_snapshot())
+            while True:
+                _ = await websocket.receive_text()
+        except (RuntimeError, WebSocketDisconnect):
+            connections.disconnect(websocket)
 
     return router

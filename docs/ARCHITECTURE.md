@@ -7,16 +7,15 @@ Ce document décrit **l'implémentation actuelle**. Les évolutions sont dans la
 ## Structure et flux
 
 Python, FastAPI, TwitchIO 3/EventSub, PostgreSQL via Psycopg 3 asynchrone et
-frontend HTML/JavaScript natif. Le schéma PostgreSQL version 1 est prêt. Le
+frontend HTML/JavaScript natif. Le schéma PostgreSQL version 2 supporte plusieurs streamers. Le
 parcours giveaway Twitch → OBS, y compris le minuteur, est validé. Les
 contrôles SQL isolés, les clés OBS, les coupures SQL et les sauvegardes
 restent dans [ADR-0011](adr/0011-exploitation-durable.md).
 
 ```text
-Chat du streamer actif → TwitchIO → commandes → service → moteur + PostgreSQL
-                                                  │
-                                                  └── WebSocket → OBS
-/admin → OAuth Twitch → identité du streamer → abonnement du bot global
+Chat Twitch → bot global → broadcaster_id → contexte streamer → commandes/Giveaway + PostgreSQL
+                                                └── WebSocket réservé au propriétaire → OBS
+/admin → OAuth Twitch → identité de session → contexte et abonnement EventSub du streamer
 ```
 
 | Répertoire | Responsabilité |
@@ -28,9 +27,9 @@ Chat du streamer actif → TwitchIO → commandes → service → moteur + Postg
 | `app/infrastructure/` | PostgreSQL, stockage et intégration Twitch |
 | `app/web/` | Routes, WebSockets et assets administratifs/plugins |
 
-Le service est la source de vérité. Un moteur global et un verrou asynchrone
-sérialisent les opérations ; OBS affiche les données mais ne choisit jamais les
-gagnants.
+Le service est la source de vérité. Chaque streamer possède un moteur, un
+service, un verrou asynchrone et un minuteur ; OBS affiche les données mais ne
+choisit jamais les gagnants.
 
 ## Giveaway et échéance
 
@@ -64,14 +63,15 @@ rechargement échoue, aucune nouvelle mutation n'est autorisée.
 | `.env` | Secrets et bootstrap, modèle partageable dans `.env.example` uniquement |
 | `data/settings.json` | Configuration globale non secrète, validée avec Pydantic et écrite atomiquement |
 | `.tio.tokens.json` | Tokens OAuth gérés par TwitchIO ; ne jamais lire, afficher ou partager |
-| PostgreSQL | Identités, giveaway actif, historique et empreintes des clés OBS |
+| PostgreSQL | Identités, giveaways propriétaires, préférences, historique et empreintes des clés OBS |
 
 Tables principales :
 
-- `streamers` : identité Twitch stable, profil et indicateur d'activité ; un
-  seul streamer actif autorisé.
-- `giveaways` : lot, statut, dates et échéance ; un seul giveaway actif global,
-  pas encore de propriétaire `broadcaster_id`.
+- `streamers` : identité Twitch stable, profil et indicateur d'activité ;
+  plusieurs streamers peuvent être activés simultanément.
+- `streamer_preferences` : préfixe de commandes propre à chaque streamer.
+- `giveaways` : lot, statut, dates, échéance et propriétaire ; un seul giveaway
+  actif par streamer.
 - `participants` : unicité `(giveaway_id, twitch_user_id)`.
 - `winners` : gagnants uniques par giveaway et ordre de tirage unique.
 - `overlay_access_keys` : clé composée `(streamer_id, plugin_slug)`, empreinte
@@ -90,11 +90,11 @@ connexion, y compris après une lecture. Les délais de connexion, de requête e
 d'attente de verrou sont bornés ; les erreurs du pilote sont remplacées par un
 message sans données de connexion ni valeurs SQL.
 
-La migration initiale est définie dans `app/infrastructure/database.py`,
-appliquée explicitement et enregistrée dans `schema_migrations` (version 1). Un
-verrou PostgreSQL sérialise les migrations ; une nouvelle exécution n'applique
-pas à nouveau la version enregistrée. L'application contrôle cette version au
-démarrage. Les commandes sont dans le
+Les migrations versionnées sont définies dans `app/infrastructure/database.py`
+et appliquées explicitement sous verrou PostgreSQL. La version 2 supprime les
+giveaways existants (données de test), ajoute leur propriétaire et autorise
+plusieurs streamers actifs. Une nouvelle exécution ne rejoue pas les versions
+enregistrées ; l'application contrôle la version au démarrage. Les commandes sont dans le
 [README](../README.md#installation-et-lancement).
 
 Un verrou applicatif commun sérialise les changements d'identité et de clés avec
@@ -105,25 +105,28 @@ verrou métier du giveaway.
 ## Authentification et isolation
 
 Trois identités distinctes : application Twitch (Client ID/Secret), compte bot
-fixe et streamer actif validé par OAuth. Les commandes de gestion utilisent
-l'identifiant Twitch stable, jamais le nom affiché ni un identifiant fourni par
-le navigateur.
+global et streamers autorisés par OAuth. Les commandes de gestion utilisent
+l'identifiant stable du broadcaster et de l'auteur, jamais le nom affiché ni un
+identifiant fourni par le navigateur.
 
 La session administrative est signée, expirante et portée par un cookie
 `HttpOnly`, `SameSite=Lax`, sécurisé en HTTPS. Les états OAuth sont courts et à
-usage unique. Les tokens OAuth restent côté serveur, hors des tables métier.
+usage unique. Les tokens OAuth restent côté serveur, hors des tables métier. Chaque message
+EventSub est routé par broadcaster ; la révocation d'un abonnement retire
+uniquement ce streamer du routage des commandes. Son minuteur, ses données et
+ses connexions OBS en lecture restent indépendants.
 Toute personne ayant accès au réseau peut tenter de se connecter : ce n'est pas
 une isolation SaaS multi-client.
 
 Une clé OBS donne uniquement un accès de lecture au plugin ciblé, indépendamment
 de la session web. Elle possède 256 bits d'entropie et seule son empreinte
-SHA-256 est persistée. Le plugin et le streamer actif sont vérifiés avant
-diffusion. Sa valeur en clair n'est retournée qu'à la génération, avec
+SHA-256 est persistée. Le plugin et le propriétaire de la clé sont vérifiés
+avant diffusion ; chaque événement est routé vers son contexte. Sa valeur en clair n'est retournée qu'à la génération, avec
 `Cache-Control: no-store`.
 
-Le gestionnaire actuel associe les connexions au streamer et ne sert que
-Giveaway. L'isolation des déconnexions entre plusieurs plugins devra être
-implémentée à l'arrivée du Chat ; la table de clés seule ne suffit pas.
+Le gestionnaire associe les connexions au streamer et ne sert que Giveaway.
+Les clés OBS sont composées par streamer et plugin ; rotations et diffusions ne
+concernent que le propriétaire correspondant.
 
 ## Routes et protocole OBS
 
@@ -134,6 +137,9 @@ implémentée à l'arrivée du Chat ; la table de clés seule ne suffit pas.
 | `/auth/twitch/callback`, `/auth/logout` | Retour OAuth et déconnexion |
 | `/api/admin/plugins/giveaway/overlay-access` | État de la clé, sans sa valeur |
 | `/api/admin/plugins/giveaway/overlay-access/rotate` | Rotation authentifiée par `POST` |
+| `/api/admin/plugins/giveaway/history` | Historique paginé du streamer connecté |
+| `/api/admin/plugins/giveaway/history/{id}` | Détail propriétaire avec participants et gagnants |
+| `/api/admin/plugins/giveaway/preferences` | Préfixe de commandes par streamer |
 | `/plugins/giveaway/overlay`, `/plugins/giveaway/static` | Page et assets OBS |
 | `/plugins/giveaway/ws` | WebSocket authentifié |
 | `/health` | Réponse du service, pas une disponibilité complète |
@@ -146,8 +152,8 @@ Le navigateur l'envoie comme premier message WebSocket :
 ```
 
 Sans authentification valide sous cinq secondes, la connexion ferme avec `1008`,
-sans données. Une rotation ou un remplacement du streamer actif ferme les
-connexions concernées. Les pages et scripts seuls ne contiennent aucune donnée
+sans données. Une rotation ferme uniquement les connexions du streamer
+propriétaire. Les pages et scripts seuls ne contiennent aucune donnée
 métier.
 
 L'état initial et les diffusions ont la même enveloppe :
@@ -214,7 +220,9 @@ uniquement l’empreinte du token. Le secret stocké dans l’onglet est accessi
 JavaScript de l’origine ; ce stockage n’est pas une protection contre une XSS.
 Les restaurations ou duplications d’onglets peuvent conserver ce stockage selon
 le navigateur. Aucun `localStorage`, cookie ou journal ne reçoit le lien.
-L’entrée Chat est uniquement une présentation « prévu » :
+Les préférences Giveaway (préfixe) et l'historique paginé avec détail des
+participants et gagnants sont présentés dans l'administration. L'entrée Chat est
+uniquement une présentation « prévu » :
 aucun aperçu, accès OBS ou appel d’API Chat n’est implémenté. Ajouter un plugin
 implique sa navigation et ses vues propres, sans framework de plugins générique.
 

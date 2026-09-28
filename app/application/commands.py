@@ -30,6 +30,12 @@ class GiveawayCommandHandler:
         self._active_broadcaster_id: str | None = None
         self._prefix: str = prefix
 
+    def set_prefix(self, prefix: str) -> None:
+        normalized_prefix = prefix.strip()
+        if not 1 <= len(normalized_prefix) <= 5:
+            raise ValueError("The command prefix must contain 1 to 5 characters")
+        self._prefix = normalized_prefix
+
     def set_active_broadcaster(self, twitch_user_id: str) -> None:
         normalized_user_id = twitch_user_id.strip()
         if not normalized_user_id:

@@ -8,13 +8,13 @@ from fastapi.responses import RedirectResponse
 from twitchio.exceptions import HTTPException as TwitchHTTPException
 from twitchio.exceptions import TwitchioException
 
-from app.application.commands import GiveawayCommandHandler
 from app.application.oauth_state import OAuthStateStore
 from app.application.session import SESSION_COOKIE_NAME, SessionSigner
 from app.core.configuration import ApplicationConfiguration
 from app.core.environment import Settings
 from app.infrastructure.database import Database, DatabaseError
-from app.infrastructure.streamers import load_active_streamer, save_active_streamer
+from app.domain.streamer import Streamer
+from app.infrastructure.streamers import save_streamer
 from app.infrastructure.twitch import GiveawayTwitchBot
 from app.infrastructure.twitch_oauth import (
     BOT_SCOPE_NAMES,
@@ -23,7 +23,6 @@ from app.infrastructure.twitch_oauth import (
     TwitchOAuthClient,
     build_authorization_url,
 )
-from app.web.websocket import OverlayConnectionManager
 
 LOGGER = logging.getLogger("uvicorn.error")
 
@@ -190,8 +189,7 @@ async def complete_streamer_authorization(
 ) -> RedirectResponse:
     database = cast(Database, request.app.state.database)
     try:
-        previous_active_streamer = await load_active_streamer(database)
-        await save_active_streamer(
+        await save_streamer(
             database,
             twitch_user_id=authorization.twitch_user_id,
             login=authorization.login,
@@ -204,25 +202,14 @@ async def complete_streamer_authorization(
             detail="Unable to persist the Twitch identity",
         ) from None
 
-    if (
-        previous_active_streamer is not None
-        and previous_active_streamer.twitch_user_id != authorization.twitch_user_id
-    ):
-        overlay_connections = cast(
-            OverlayConnectionManager,
-            request.app.state.overlay_connections,
-        )
-        await overlay_connections.disconnect_streamer(
-            previous_active_streamer.twitch_user_id,
-        )
-
-    giveaway_command_handler = cast(
-        GiveawayCommandHandler,
-        request.app.state.giveaway_command_handler,
+    streamer = Streamer(
+        twitch_user_id=authorization.twitch_user_id,
+        login=authorization.login,
+        display_name=authorization.display_name,
+        profile_image_url=authorization.profile_image_url,
     )
-    giveaway_command_handler.set_active_broadcaster(
-        authorization.twitch_user_id,
-    )
+    context_factory = request.app.state.ensure_streamer_context
+    giveaway_command_handler = await context_factory(streamer)
 
     twitch_bot = cast(
         GiveawayTwitchBot | None,
@@ -234,7 +221,9 @@ async def complete_streamer_authorization(
             async with asyncio.timeout(10):
                 await twitch_bot.wait_until_ready()
 
-            await twitch_bot.subscribe_to_streamer(authorization)
+            await twitch_bot.subscribe_to_streamer(
+                authorization, giveaway_command_handler
+            )
         except (
             TimeoutError,
             TwitchioException,

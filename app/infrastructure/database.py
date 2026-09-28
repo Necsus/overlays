@@ -14,7 +14,7 @@ from psycopg.rows import dict_row
 
 from app.core.environment import Settings
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 Connection = psycopg.AsyncConnection[dict[str, Any]]
 
 # The initial migration targets an empty PostgreSQL database, not a SQLite dump.
@@ -71,6 +71,22 @@ INITIAL_SCHEMA = (
     "CREATE UNIQUE INDEX one_active_streamer ON streamers ((1)) WHERE enabled",
     """CREATE UNIQUE INDEX one_active_giveaway ON giveaways ((1))
         WHERE status IN ('WAITING', 'OPEN', 'WINNER')""",
+)
+
+MULTI_STREAMER_SCHEMA = (
+    "DROP INDEX one_active_streamer",
+    "DROP INDEX one_active_giveaway",
+    "ALTER TABLE giveaways ADD COLUMN streamer_id TEXT REFERENCES streamers(twitch_user_id) ON DELETE CASCADE",
+    # Existing records are disposable test data; do not guess their ownership.
+    "DELETE FROM giveaways",
+    "ALTER TABLE giveaways ALTER COLUMN streamer_id SET NOT NULL",
+    "CREATE UNIQUE INDEX one_active_giveaway_per_streamer ON giveaways (streamer_id) WHERE status IN ('WAITING', 'OPEN', 'WINNER')",
+    "CREATE INDEX giveaways_streamer_history ON giveaways (streamer_id, created_at DESC, id DESC)",
+    """CREATE TABLE streamer_preferences (
+        streamer_id TEXT PRIMARY KEY REFERENCES streamers(twitch_user_id) ON DELETE CASCADE,
+        command_prefix TEXT NOT NULL DEFAULT '!' CHECK (length(command_prefix) BETWEEN 1 AND 5),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
 )
 
 
@@ -166,14 +182,20 @@ class Database:
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
             versions = [row["version"] for row in await cursor.fetchall()]
-            if versions == [SCHEMA_VERSION]:
+            if versions == list(range(1, SCHEMA_VERSION + 1)):
                 return
-            if versions:
+            if versions not in ([], [1]):
                 raise DatabaseError("Unsupported PostgreSQL schema version")
-            for statement in INITIAL_SCHEMA:
+            if not versions:
+                for statement in INITIAL_SCHEMA:
+                    await cursor.execute(statement)
+                await cursor.execute(
+                    "INSERT INTO schema_migrations (version) VALUES (1)"
+                )
+            for statement in MULTI_STREAMER_SCHEMA:
                 await cursor.execute(statement)
             await cursor.execute(
-                "INSERT INTO schema_migrations (version) VALUES (%s)", (SCHEMA_VERSION,)
+                "INSERT INTO schema_migrations (version) VALUES (2)"
             )
 
 

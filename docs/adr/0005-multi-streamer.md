@@ -2,7 +2,7 @@
 
 [← Roadmap](../ROADMAP.md)
 
-**Statut :** évolution prévue ; validation simultanée restante.
+**Statut :** implémentation ajoutée ; validation simultanée réelle restante.
 
 ## Contexte
 
@@ -21,19 +21,23 @@ croisements après redémarrage.
 
 ## Travail associé et validation
 
-À partir du socle OAuth et PostgreSQL existant :
+À partir du socle OAuth et PostgreSQL existant. La migration v2 supprime les
+giveaways PostgreSQL existants (données de test non conservées) ; identités et
+clés OBS restent en place. L'architecture de la cible est décrite dans
+[Architecture](../ARCHITECTURE.md).
 
-- ajouter une migration versionnée pour rattacher les giveaways à un
-  propriétaire sans perdre les données présentes à cette étape, puis remplacer
-  l'unicité globale par une unicité par streamer ;
-- créer les moteurs, services, minuteurs et connexions isolés par
-  streamer/plugin ;
-- maintenir plusieurs abonnements EventSub avec le même bot, restaurer chacun et
-  isoler les révocations ;
-- ajouter les préférences par streamer et l'historique administratif paginé,
-  participants compris ;
-- filtrer chaque accès aux données par l'identité de session et retourner `404`
-  pour les ressources d'un autre streamer.
+Implémentation ajoutée :
+
+- migration versionnée vers le propriétaire par giveaway et unicité par
+  streamer ; les giveaways de test préexistants sont supprimés plutôt que mal
+  attribués ;
+- moteurs, services, minuteurs et connexions OBS isolés par streamer ;
+- abonnements EventSub multiples restaurés avec le même bot ; une révocation
+  désactive uniquement le routage du streamer concerné ;
+- préfixe de commande par streamer et historique paginé avec détail participants
+  et gagnants ;
+- opérations SQL et accès API filtrés par identité de session, avec `404` pour
+  une ressource appartenant à un autre streamer.
 
 **Terminé quand :** deux chaînes utilisent simultanément des giveaways
 indépendants, y compris après redémarrage, sans commandes, données ou

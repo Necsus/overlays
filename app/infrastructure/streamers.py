@@ -4,7 +4,7 @@ from app.domain.streamer import Streamer
 from app.infrastructure.database import Database
 
 
-async def save_active_streamer(
+async def save_streamer(
     database: Database,
     twitch_user_id: str,
     login: str,
@@ -13,10 +13,6 @@ async def save_active_streamer(
 ) -> None:
     now = datetime.now(UTC)
     async with database.transaction() as connection, connection.cursor() as cursor:
-        await cursor.execute(
-            "UPDATE streamers SET enabled = FALSE, updated_at = %s WHERE enabled",
-            (now,),
-        )
         await cursor.execute(
             """INSERT INTO streamers (
                        twitch_user_id, login, display_name, profile_image_url,
@@ -32,21 +28,20 @@ async def save_active_streamer(
         )
 
 
-async def load_active_streamer(database: Database) -> Streamer | None:
+async def load_active_streamers(database: Database) -> list[Streamer]:
     async with database.transaction() as connection, connection.cursor() as cursor:
         await cursor.execute(
             """SELECT twitch_user_id, login, display_name, profile_image_url
-                   FROM streamers WHERE enabled LIMIT 1"""
+                   FROM streamers WHERE enabled ORDER BY twitch_user_id"""
         )
-        row = await cursor.fetchone()
-    return Streamer(**row) if row is not None else None
+        return [Streamer(**row) for row in await cursor.fetchall()]
 
 
 async def load_streamer(database: Database, twitch_user_id: str) -> Streamer | None:
     async with database.transaction() as connection, connection.cursor() as cursor:
         await cursor.execute(
             """SELECT twitch_user_id, login, display_name, profile_image_url
-                   FROM streamers WHERE twitch_user_id = %s LIMIT 1""",
+                   FROM streamers WHERE twitch_user_id = %s AND enabled LIMIT 1""",
             (twitch_user_id,),
         )
         row = await cursor.fetchone()

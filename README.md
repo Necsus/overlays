@@ -7,9 +7,9 @@ une administration commune.
   gagnants multiples.
 - **Chat** : plugin en préparation, pas encore disponible.
 
-L'application utilise **un seul streamer actif**, un bot global et plusieurs
-sources OBS possibles. Se connecter avec un autre compte Twitch remplace le
-canal actif ; le multi-streamer simultané n'est pas encore disponible.
+L'application prend en charge plusieurs streamers simultanément avec un bot
+Twitch global. Chaque streamer possède son giveaway, ses préférences de commande,
+son historique et ses clés OBS indépendants.
 
 ## Installation et lancement
 
@@ -47,8 +47,11 @@ de passe dans une commande ou une URL partagée. Pour un serveur distant,
 utiliser `verify-full` avec un certificat de confiance plutôt que le mode
 opportuniste `prefer`.
 
-La migration crée les tables et enregistre la version du schéma, sans créer la
-base ou le rôle ni supprimer de table existante.
+La migration versionnée crée les tables et enregistre la version du schéma,
+sans créer la base ou le rôle. La migration multi-streamer supprime les giveaways
+existants (données de test), puis ajoute l’isolation par streamer ; exécute-la
+avant de démarrer la nouvelle version. Ne lance pas en parallèle une ancienne
+version de l’application sur le même schéma.
 
 - **Rôle de migration** : droit de créer des objets dans le schéma `public`.
 - **Rôle applicatif** : lecture/écriture des tables et usage de la séquence des
@@ -132,8 +135,8 @@ dans le même onglet grâce à `sessionStorage`, si le compte et la rotation son
 inchangés. Si ce stockage est bloqué, copiez-le avant de recharger. La déconnexion
 efface cette copie locale, mais ne coupe pas le giveaway. Perdre la copie locale
 ne révoque pas le lien dans OBS. Le régénérer invalide l'ancien lien et déconnecte
-ses sources ; changer de streamer actif déconnecte les sources de l'ancien
-streamer.
+ses sources. Les connexions OBS restent propres à chaque streamer ; connecter
+un autre compte ne déconnecte pas les sources des autres.
 
 Le rendu se personnalise dans le champ **CSS personnalisé** d'OBS. Éléments
 disponibles : `#giveaway`, `#lot`, `#status`, `#participants`, `#winner`,
@@ -148,6 +151,9 @@ disponibles : `#giveaway`, `#lot`, `#status`, `#participants`, `#winner`,
 | `!join` | Viewer | Inscrit le viewer une seule fois. |
 | `!gapull` | Streamer | Ferme les inscriptions et tire un gagnant, puis ajoute un gagnant inédit à chaque nouvel appel. |
 | `!gastop` | Streamer | Termine le giveaway et masque l'overlay. |
+
+Le préfixe `!` est le défaut et peut être personnalisé depuis les préférences
+Giveaway de l’administration ; il est propre à chaque streamer.
 
 Exemple : `!galot Clavier mécanique`, puis `!gastart 60`.
 
@@ -175,9 +181,11 @@ Les identités, giveaways, participants, gagnants et empreintes des clés OBS
 résident désormais dans PostgreSQL. `data/settings.json` reste une configuration
 locale ; les tokens Twitch restent hors de la base SQL.
 
-La migration repart à vide : l'ancien fichier SQLite de test a été supprimé avec
-accord. Après initialisation de PostgreSQL, se reconnecter dans `/admin` et
-générer de nouveaux liens OBS. Les anciens liens ne sont pas repris.
+L’ancienne version de test SQLite a été supprimée avec accord. La migration
+multi-streamer supprime aussi les giveaways PostgreSQL préexistants de test ; les
+identités Twitch et clés OBS sont conservées. Les contextes sont restaurés au
+démarrage ; reconnecte un compte dans `/admin` si son autorisation Twitch doit
+être renouvelée. Les liens OBS existants restent rattachés à leur streamer.
 
 ### Sauvegarde PostgreSQL
 

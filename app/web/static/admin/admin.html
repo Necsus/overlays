@@ -147,6 +147,24 @@
               </section>
             </section>
 
+            <section class="panel session-panel" aria-labelledby="giveaway-settings-title">
+              <h3 id="giveaway-settings-title">Préférences Giveaway</h3>
+              <form id="giveaway-preferences-form" class="session-actions">
+                <label for="giveaway-command-prefix">Préfixe des commandes</label>
+                <input id="giveaway-command-prefix" name="command_prefix" minlength="1" maxlength="5" required>
+                <button class="button button-secondary" type="submit">Enregistrer</button>
+              </form>
+              <p id="giveaway-preferences-status" class="field-help" role="status"></p>
+            </section>
+
+            <section class="panel session-panel" aria-labelledby="giveaway-history-title">
+              <h3 id="giveaway-history-title">Historique des giveaways</h3>
+              <div id="giveaway-history-list" aria-live="polite"></div>
+              <button id="giveaway-history-more" class="button button-secondary" type="button" hidden>Afficher la suite</button>
+              <div id="giveaway-history-detail"></div>
+              <p id="giveaway-history-status" class="field-help" role="status"></p>
+            </section>
+
           </section>
 
           <section data-admin-page="account" aria-labelledby="account-title" hidden>
@@ -170,7 +188,7 @@
               <span class="status-pill status-success"><span class="status-dot" aria-hidden="true"></span>Session connectée</span>
             </div>
             <dl class="status-grid" aria-label="État des services Twitch">
-              <div class="status-card"><dt>Streamer actif</dt><dd id="active-streamer"></dd></div>
+              <div class="status-card"><dt>Compte Twitch connecté</dt><dd id="active-streamer"></dd></div>
               <div class="status-card"><dt>Bot global</dt><dd id="bot-login"></dd></div>
               <div class="status-card"><dt>Réception du chat Twitch</dt><dd><span id="chat-status" class="service-status" role="status"></span></dd></div>
             </dl>

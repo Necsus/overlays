@@ -24,10 +24,12 @@ T = TypeVar("T")
 class GiveawayService:
     def __init__(
         self,
+        streamer_id: str,
         engine: GiveawayEngine,
         database: Database,
         overlay_connections: OverlayConnectionManager,
     ) -> None:
+        self._streamer_id = streamer_id
         self._engine = engine
         self._database = database
         self._overlay_connections = overlay_connections
@@ -48,7 +50,7 @@ class GiveawayService:
         if not self._needs_reload:
             return
         restored = GiveawayEngine()
-        await restore_active_giveaway(self._database, restored)
+        await restore_active_giveaway(self._database, self._streamer_id, restored)
         self._cancel_timer()
         self._apply(restored)
         self._needs_reload = False
@@ -105,7 +107,9 @@ class GiveawayService:
         if self._engine.participants:
             await self._draw(giveaway_id)
         else:
-            await self._persist(stop_giveaway(self._database, giveaway_id))
+            await self._persist(
+                stop_giveaway(self._database, self._streamer_id, giveaway_id)
+            )
             self._engine.stop()
         self._cancel_timer()
         await self._broadcast_state()
@@ -114,7 +118,7 @@ class GiveawayService:
         candidate = copy(self._engine)
         candidate.winners = self._engine.winners.copy()
         winner = candidate.pull()
-        await self._persist(draw_giveaway(self._database, giveaway_id, winner))
+        await self._persist(draw_giveaway(self._database, self._streamer_id, giveaway_id, winner))
         self._apply(candidate)
         return winner
 
@@ -128,7 +132,7 @@ class GiveawayService:
             if candidate.giveaway_id is None or candidate.lot is None:
                 raise RuntimeError("The giveaway was not initialized correctly")
             await self._persist(
-                create_giveaway(self._database, candidate.giveaway_id, candidate.lot)
+                create_giveaway(self._database, self._streamer_id, candidate.giveaway_id, candidate.lot)
             )
             self._apply(candidate)
             await self._broadcast_state()
@@ -148,7 +152,7 @@ class GiveawayService:
                 if duration_seconds is not None
                 else None
             )
-            await self._persist(open_giveaway(self._database, giveaway_id, deadline))
+            await self._persist(open_giveaway(self._database, self._streamer_id, giveaway_id, deadline))
             self._engine.start()
             self._engine.closes_at = deadline
             self.resume_timer()
@@ -166,7 +170,7 @@ class GiveawayService:
             ):
                 return False
             was_persisted = await self._persist(
-                add_participant(self._database, giveaway_id, participant)
+                add_participant(self._database, self._streamer_id, giveaway_id, participant)
             )
             if not was_persisted:
                 self._needs_reload = True
@@ -189,7 +193,9 @@ class GiveawayService:
         async with self._lock:
             await self._ensure_consistent()
             giveaway_id = self._active_giveaway_id()
-            await self._persist(stop_giveaway(self._database, giveaway_id))
+            await self._persist(
+                stop_giveaway(self._database, self._streamer_id, giveaway_id)
+            )
             self._engine.stop()
             self._cancel_timer()
             await self._broadcast_state()
@@ -200,4 +206,6 @@ class GiveawayService:
         return self._engine.giveaway_id
 
     async def _broadcast_state(self) -> None:
-        await self._overlay_connections.broadcast(self._engine.overlay_snapshot())
+        await self._overlay_connections.broadcast(
+            self._streamer_id, self._engine.overlay_snapshot()
+        )
