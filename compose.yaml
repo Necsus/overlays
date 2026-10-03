@@ -1,0 +1,69 @@
+services:
+  db:
+    image: postgres:18.6-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+    # Remplacer 192.168.1.112 si l'adresse LAN réservée du Geekom change ;
+    # ne jamais utiliser 0.0.0.0 ou :: pour PostgreSQL.
+    ports:
+      - "192.168.1.112:5432:5432"
+      # Dans le .env du Geekom, TAILSCALE_IPV4 doit être la sortie de `tailscale ip -4`.
+      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      TWITCH_ENABLED: ${TWITCH_ENABLED:-false}
+      TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID:?Set TWITCH_CLIENT_ID in .env}
+      TWITCH_CLIENT_SECRET: ${TWITCH_CLIENT_SECRET:?Set TWITCH_CLIENT_SECRET in .env}
+      TWITCH_BOT_ID: ${TWITCH_BOT_ID:?Set TWITCH_BOT_ID in .env}
+      TWITCH_OWNER_ID: ${TWITCH_OWNER_ID:?Set TWITCH_OWNER_ID in .env}
+      TWITCH_BOT_LOGIN: ${TWITCH_BOT_LOGIN:?Set TWITCH_BOT_LOGIN in .env}
+      TWITCH_ADMIN_REDIRECT_URI: ${TWITCH_ADMIN_REDIRECT_URI:?Set TWITCH_ADMIN_REDIRECT_URI in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-28800}
+      TWITCH_COMMAND_PREFIX: ${TWITCH_COMMAND_PREFIX:-!}
+      PSQL_HOST: db
+      PSQL_PORT: "5432"
+      PSQL_DB: ${PSQL_DB:?Set PSQL_DB in .env}
+      PSQL_USER: ${PSQL_USER:?Set PSQL_USER in .env}
+      PSQL_PASSWORD: ${PSQL_PASSWORD:?Set PSQL_PASSWORD in .env}
+      PSQL_SSLMODE: disable
+      GIVEAWAY_CONFIG_FILE: /var/lib/overlays/settings.json
+    volumes:
+      - overlays_runtime:/var/lib/overlays
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+      - app_egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:
+  overlays_runtime:
+
+networks:
+  backend:
+    internal: true
+  app_egress:

@@ -2,12 +2,12 @@
 
 ## Sécurité et secrets
 
-- Ne jamais lire, afficher, rechercher ou transmettre le contenu de `.env`,
-  `.tio.tokens.json` ou de leurs sauvegardes. Leur existence peut être vérifiée
+- Ne jamais lire, afficher, rechercher ou transmettre le contenu du `.env` réel,
+  de `.tio.tokens.json` ou de leurs sauvegardes. Leur existence peut être vérifiée
   sans consulter leur contenu.
-- Utiliser uniquement `.env.example` pour connaître les variables attendues. Si
-  une information manque, demander une valeur fictive ou son ajout par
-  l'utilisateur dans ce modèle.
+- `.env.example` est un modèle sans secrets : il peut être lu et modifié pour
+  documenter les variables attendues, en utilisant uniquement des valeurs
+  fictives. Ne jamais y copier de secrets réels.
 - Traiter les clés OBS, tokens OAuth, cookies et secrets de session comme
   confidentiels : ne pas les copier dans le code, la documentation, les journaux
   ou les réponses.
@@ -22,12 +22,13 @@
 
 - L'objectif prioritaire est l'autonomie de l'utilisateur, pas la quantité de
   code produite.
-- Par défaut, l'utilisateur écrit le code. L'IA explique, donne des indices et
-  relit sans appliquer les corrections. Les modifications de fichiers se
-  limitent à la documentation textuelle.
-- Commencer par le problème, les contraintes et le flux de données, puis inviter
-  l'utilisateur à proposer une première version avant de fournir une solution
-  complète.
+- L'IA peut implémenter les changements demandés dans le périmètre convenu ;
+  l'utilisateur n'a pas besoin d'écrire le code lui-même.
+- Le but reste que l'utilisateur comprenne le travail : expliquer brièvement le
+  problème, les contraintes, les choix de conception et les changements réalisés,
+  ainsi que leur raison. Présenter un plan avant les changements non triviaux.
+- Adapter le niveau d'explication à la tâche. Proposer une approche guidée ou une
+  première version à l'utilisateur lorsqu'il souhaite pratiquer, sans l'imposer.
 - En cas de blocage, progresser par question directrice, pseudo-code, signature,
   puis extrait minimal. Vérifier la compréhension lorsque c'est utile, sans
   transformer chaque échange en interrogation.
@@ -36,10 +37,10 @@
 
 ## Autorisations exceptionnelles et périmètre
 
-- Une autorisation explicite de coder est limitée à la tâche ou aux fichiers
-  confiés. Elle ne suspend pas durablement le mode mentor.
-- Avant d'implémenter exceptionnellement, annoncer brièvement le périmètre et le
-  critère de fin. Demander une décision si une ambiguïté bloque le travail.
+- Toute demande d'implémentation autorise uniquement les changements nécessaires
+  à la tâche demandée ; ne pas étendre le périmètre de sa propre initiative.
+- Pour une tâche non triviale, annoncer brièvement le périmètre et le critère de
+  fin avant d'implémenter. Demander une décision si une ambiguïté bloque le travail.
 - Ne pas ajouter de fonctionnalité, dépendance ou refactorisation annexe sans
   accord. Expliquer les changements connexes indispensables avant de les
   entreprendre.

@@ -1,12 +1,13 @@
 # Déploiement de la release
 
-Procédure pour publier une version figée sur **https://overlay.necsus.dev**,
-distincte du dépôt de développement. L'installation locale de dev reste dans le
-[README](../README.md).
+Procédure historique pour publier une version figée sur
+**https://overlays.necsus.dev**, distincte du dépôt de développement.
+L'installation locale de dev reste dans le [README](../README.md).
 
-**État :** première release **clôturée**. L'utilisateur a confirmé qu'elle
-fonctionne (`overlays.service`, https://overlay.necsus.dev). Les mises à jour
-suivent la section 4.
+**État :** cette procédure décrit l'ancienne installation NixOS, confirmée
+sous `https://overlay.necsus.dev`. Le nom retenu pour le prochain déploiement est
+`https://overlays.necsus.dev` ; le DNS, le proxy HTTPS et le callback Twitch
+restent à basculer. Ces instructions ne sont pas une procédure Debian/Compose.
 
 ## Décisions en vigueur
 
@@ -14,15 +15,15 @@ suivent la section 4.
 | --- | --- |
 | Code figé | `/srv/overlays`, commit Git explicite |
 | Processus | service systemd NixOS, `127.0.0.1:8000`, un worker, sans `--reload` |
-| Accès | Nginx HTTPS `overlay.necsus.dev` → `8000` |
-| Dev | dépôt `/home/necsus/dev/overlays`, commande Python sur `8001` |
-| PostgreSQL | **même base `overlays` pour release et dev** (séparation reportée) |
+| Accès cible | Nginx HTTPS `overlays.necsus.dev` → `8000` |
+| Dev | historique : dépôt `/home/necsus/dev/overlays` ; cible actuelle : processus local sur `127.0.0.1:8001` |
+| PostgreSQL | historique : même base `overlays` ; cible Geekom : bases `overlays` (release) et `overlays_dev` (dev), rôles distincts |
 
-La base partagée implique un seul streamer actif, un seul giveaway et les
-mêmes clés OBS. Deux processus avec Twitch activé traiteraient les mêmes
-commandes. Tant que la base n'est pas séparée : **Twitch activé sur une seule
-instance à la fois**. En pratique, `TWITCH_ENABLED=false` dans le `.env` de
-dev, ou arrêt du processus de dev, pendant que la release sert le live.
+Le partage de base décrit uniquement l'ancienne installation. La séparation
+release/dev sur le Geekom évite les migrations et données communes, mais ne
+sépare pas les événements Twitch : deux processus connectés au même canal peuvent
+traiter les mêmes commandes. Garder Twitch désactivé en développement sauf usage
+d'un canal de test distinct.
 
 Conserver des fichiers `.env` et `.tio.tokens.json` **distincts**. Ne jamais
 les versionner, les afficher ni les copier dans cette documentation.
@@ -114,7 +115,7 @@ Compléter `.env` **sur la machine**, sans coller de secrets dans le terminal
 ni dans un ticket :
 
 - `PSQL_*` : mêmes valeurs que l'application actuelle (`PSQL_DB=overlays`).
-- `TWITCH_ADMIN_REDIRECT_URI=https://overlay.necsus.dev/auth/twitch/callback`
+- `TWITCH_ADMIN_REDIRECT_URI=https://overlays.necsus.dev/auth/twitch/callback`
 - `SESSION_COOKIE_SECURE=true`
 - `SESSION_SECRET` : nouvelle valeur, distincte de la dev
 - Identifiants de l'application Twitch : les mêmes que pour le live, avec ce
@@ -149,11 +150,11 @@ Contrôles attendus, **sans exposer de secrets** :
 ```bash
 systemctl is-active overlays.service
 curl --noproxy '*' --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/health
-curl --noproxy '*' --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://overlay.necsus.dev/health
+curl --noproxy '*' --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://overlays.necsus.dev/health
 ```
 
 Les deux `/health` doivent répondre `200`. Confirmer ensuite
-https://overlay.necsus.dev/admin depuis le navigateur.
+https://overlays.necsus.dev/admin depuis le navigateur.
 
 Un `502` Nginx signifie que le service n'écoute pas encore sur `8000`. Consulter
 `journalctl -u overlays.service -e` sans y coller de fichier d'environnement.
@@ -182,7 +183,7 @@ bundle Git lisible par l'utilisateur `overlays` (son compte n'a pas accès à
 `/home/necsus`). `libpq` est repris depuis `LD_LIBRARY_PATH` du service.
 
 Contrôles attendus : `overlays.service` actif, `http://127.0.0.1:8000/health`
-et `https://overlay.necsus.dev/health` en HTTP 200.
+et `https://overlays.necsus.dev/health` en HTTP 200.
 
 Toute migration SQL doit rester compatible avec un retour arrière, ou être
 refusée. Un redémarrage de la release n'arrête pas Nginx ni la dev.

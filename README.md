@@ -13,8 +13,9 @@ son historique et ses clés OBS indépendants.
 
 ## Installation et lancement
 
-Sur la DevBox NixOS, depuis `/home/necsus/dev/overlays`, avec Python
-3.11 ou plus récent et une base PostgreSQL dédiée déjà créée :
+Sur le poste de développement local, depuis le clone du dépôt, avec Python
+3.11 ou plus récent et un accès au PostgreSQL 18 du Geekom via le LAN ou
+Tailscale. La base de développement y est distincte de celle de release.
 
 ```bash
 python -m venv .venv
@@ -22,15 +23,80 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 # Première installation seulement, si .env n'existe pas :
 cp -n .env.example .env
-# Compléter soi-même .env avec les valeurs nécessaires.
+# Compléter soi-même .env ; pour le développement, PSQL_DB=overlays_dev
+# et PSQL_USER/PSQL_PASSWORD doivent désigner le rôle de développement.
 python -c "import psycopg; print('Psycopg OK')"
 # Créer/mettre à jour le schéma avant de lancer l'application :
 python -m app.infrastructure.database
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-Psycopg a besoin de `libpq`. En **zsh**, une fois par machine, ajouter dans
-`~/.zshrc` :
+### Déploiement Docker Compose sur Debian
+
+Le Compose de ce dépôt est prévu pour le Geekom Debian : PostgreSQL 18.6 y
+héberge `overlays` (release) et `overlays_dev` (développement). L'application de
+release joint la base par le réseau backend ; le port 5432 est publié uniquement
+sur l'IPv4 LAN du Geekom et son IPv4 Tailscale pour les postes de développement.
+Aucun port PostgreSQL n'est redirigé depuis Internet. Créer `.env` sur le Geekom
+à partir du modèle, renseigner le compte admin PG et l'IPv4 Tailscale, puis
+configurer `PSQL_*` pour la base de release et `SESSION_COOKIE_SECURE=true`.
+Sur le poste de développement, configurer `.env` avec la base/le rôle
+`overlays_dev` et l'adresse LAN ou Tailscale. Ne jamais versionner ces fichiers.
+
+Cette séquence suppose des volumes Docker neufs. PostgreSQL n'applique les
+variables `POSTGRES_*` qu'à l'initialisation d'un répertoire de données vide ;
+ne pas réutiliser un volume existant sans en vérifier l'état. Au premier
+démarrage, lancer **uniquement** PostgreSQL :
+
+```bash
+docker compose up -d db
+```
+
+L'image crée un compte admin dédié (`POSTGRES_ADMIN_USER`), distinct des rôles
+applicatifs. La création initiale des deux bases et rôles est manuelle. Ouvrir
+une session SQL avec le compte admin :
+
+```bash
+docker compose exec db sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Dans `psql`, créer les rôles et bases séparés. `\password` demande les mots de
+passe sans les afficher ni les placer dans l'historique SQL :
+
+```sql
+CREATE ROLE overlays_release LOGIN;
+\password overlays_release
+CREATE ROLE overlays_dev LOGIN;
+\password overlays_dev
+CREATE DATABASE overlays OWNER overlays_release;
+CREATE DATABASE overlays_dev OWNER overlays_dev;
+```
+
+Configurer sur le Geekom `PSQL_DB=overlays`, `PSQL_USER=overlays_release` et son
+mot de passe correspondant. Sur le poste de développement, utiliser
+`PSQL_DB=overlays_dev`, `PSQL_USER=overlays_dev` et son propre mot de passe.
+Démarrer ensuite le service de release et appliquer sa migration :
+
+```bash
+docker compose run --rm app python -m app.infrastructure.database
+docker compose up -d app
+```
+
+L'exemple désactive Twitch par défaut. `TWITCH_ENABLED` initialise
+`data/settings.json` seulement à sa création : après cette première création,
+modifier `.env` ne change pas à lui seul la configuration persistée. Les volumes
+nommés conservent la base et les données de l'application ; ne pas les supprimer
+(`docker compose down -v`) sans décision explicite concernant les données. Le
+démarrage Compose ne configure ni reverse proxy, ni accès navigateur, ni
+sauvegardes.
+
+### Dépendance `libpq` sur l'ancienne DevBox NixOS
+
+Psycopg a besoin de `libpq`. Les commandes ci-dessous sont spécifiques à
+l'ancienne DevBox NixOS ; elles ne configurent ni macOS ni le conteneur Debian.
+L'installation de `libpq` sur le poste local actuel reste à vérifier.
+
+En **zsh**, une fois par machine, ajouter dans `~/.zshrc` :
 
 ```zsh
 [[ -f ~/dev/overlays/scripts/zsh-libpq.zsh ]] && source ~/dev/overlays/scripts/zsh-libpq.zsh
@@ -43,9 +109,10 @@ La release n'en dépend pas : elle déclare `libpq` dans le service systemd.
 
 Le modèle `.env.example` décrit les paramètres `PSQL_*` : **hôte sans port**,
 port séparé, base, utilisateur, mot de passe et mode TLS. Ne pas placer le mot
-de passe dans une commande ou une URL partagée. Pour un serveur distant,
-utiliser `verify-full` avec un certificat de confiance plutôt que le mode
-opportuniste `prefer`.
+de passe dans une commande ou une URL partagée. Le chemin Tailscale est chiffré ;
+le TLS PostgreSQL pour l'accès LAN reste à configurer. Avant toute connexion sur
+un LAN non fiable, configurer un certificat serveur et utiliser `verify-full`
+avec une autorité de confiance ; `prefer` seul ne garantit pas le chiffrement.
 
 La migration versionnée crée les tables et enregistre la version du schéma,
 sans créer la base ou le rôle. La migration multi-streamer supprime les giveaways
@@ -91,23 +158,27 @@ projet, recréer le virtualenv.
 ### Développement et release
 
 La commande ci-dessus lance le développement sur `127.0.0.1:8001`, accessible
-via **[overlay-dev.necsus.dev](https://overlay-dev.necsus.dev)** tant que le
-processus tourne. L'accès HTTPS a été contrôlé depuis le serveur et confirmé par
-l'utilisateur.
+via `http://127.0.0.1:8001` sur la machine de développement. Le sous-domaine
+`overlay-dev.necsus.dev` n'est plus utilisé. L'application se connecte à
+`overlays_dev` sur le Geekom : utiliser `192.168.1.112` comme `PSQL_HOST` à la
+maison, ou l'adresse/nom Tailscale du Geekom à l'extérieur.
 
-**[overlay.necsus.dev](https://overlay.necsus.dev)** sert la release
-(`overlays.service` → `127.0.0.1:8000`). L'utilisateur a confirmé qu'elle
-fonctionne. Publication et mises à jour : [docs/DEPLOY.md](docs/DEPLOY.md).
+Le nom de production retenu est **[overlays.necsus.dev](https://overlays.necsus.dev)**.
+L'ancienne release NixOS utilisait `overlay.necsus.dev` ; son basculement vers le
+nouveau nom et la nouvelle installation Debian restent à effectuer. La procédure
+NixOS historique est dans [docs/DEPLOY.md](docs/DEPLOY.md) et ne s'applique pas
+au déploiement Docker Compose sur Debian.
 
-Release et développement partagent pour l'instant la base PostgreSQL
-`overlays`. Twitch ne doit être activé que sur une instance à la fois.
+La release utilise PostgreSQL `overlays`, et le développement local sa base
+`overlays_dev`, dans la même instance PostgreSQL 18 du Geekom. Les rôles et
+mots de passe sont distincts. Même avec des bases séparées, ne pas activer Twitch
+simultanément sur les deux instances pour le même canal : elles pourraient traiter
+les mêmes événements.
 
-Les instructions Twitch/OBS ci-dessous utilisent le domaine cible de la release.
-Pour tester la dev, utiliser `https://overlay-dev.necsus.dev` et déclarer son
-callback exact dans l'application Twitch :
-`https://overlay-dev.necsus.dev/auth/twitch/callback`. Le parcours OAuth dev
-reste à valider ; ne pas connecter les deux instances au même canal pour des
-essais simultanés.
+Les instructions Twitch/OBS ci-dessous utilisent le domaine de production.
+Pour le développement, garder Twitch désactivé sauf si un callback OAuth local
+spécifique a été déclaré et validé dans la console Twitch ; ne pas réutiliser le
+callback de production.
 
 | Chemin | Usage |
 | --- | --- |
@@ -118,7 +189,7 @@ essais simultanés.
 ## Connecter Twitch et OBS
 
 1. Déclarer dans l'application Twitch le callback exact :
-   `https://overlay.necsus.dev/auth/twitch/callback`.
+   `https://overlays.necsus.dev/auth/twitch/callback`.
 2. Démarrer le service avec Twitch activé selon `.env.example`.
 3. Ouvrir `/auth/twitch/bot/login` sur le domaine HTTPS et autoriser **le compte
    bot configuré**, avec `user:read:chat`, `user:write:chat` et `user:bot`.
@@ -127,7 +198,7 @@ essais simultanés.
    OBS** :
 
 ```text
-https://overlay.necsus.dev/plugins/giveaway/overlay#<clé-OBS>
+https://overlays.necsus.dev/plugins/giveaway/overlay#<clé-OBS>
 ```
 
 Le lien est confidentiel. Après génération, il reste recopiable après rechargement

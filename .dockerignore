@@ -1,0 +1,26 @@
+# Git history and local repository metadata
+.git/
+
+# Python environments, caches, and build artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+.tio.tokens.json*
+
+# Local application data (settings, tokens, and other persisted state)
+data/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
