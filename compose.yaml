@@ -24,7 +24,7 @@ services:
       start_period: 10s
 
   app:
-    build: .
+    image: ghcr.io/necsus/overlays:${OVERLAYS_IMAGE_TAG:?Set OVERLAYS_IMAGE_TAG in .env}
     restart: unless-stopped
     environment:
       TWITCH_ENABLED: ${TWITCH_ENABLED:-false}
