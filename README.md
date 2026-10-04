@@ -90,6 +90,14 @@ nommés conservent la base et les données de l'application ; ne pas les supprim
 démarrage Compose ne configure ni reverse proxy, ni accès navigateur, ni
 sauvegardes.
 
+### GitHub Actions
+
+- Une PR vers `main` construit l'image sans la publier ; le contrôle `build-pr`
+  est requis pour fusionner.
+- Après fusion sur `main`, le workflow publie l'image sur GHCR avec les tags
+  `sha-<commit>` et `main`.
+- Cette publication ne redémarre pas le service sur le Geekom.
+
 ### Dépendance `libpq` sur l'ancienne DevBox NixOS
 
 Psycopg a besoin de `libpq`. Les commandes ci-dessous sont spécifiques à
