@@ -39,7 +39,8 @@ release joint la base par le réseau backend ; le port 5432 est publié uniqueme
 sur l'IPv4 LAN du Geekom et son IPv4 Tailscale pour les postes de développement.
 Aucun port PostgreSQL n'est redirigé depuis Internet. Créer `.env` sur le Geekom
 à partir du modèle, renseigner le compte admin PG et l'IPv4 Tailscale, puis
-configurer `PSQL_*` pour la base de release et `SESSION_COOKIE_SECURE=true`.
+configurer `PSQL_*` pour la base de release, `SESSION_COOKIE_SECURE=true` et
+`OVERLAYS_IMAGE_TAG=sha-<commit>` avec un tag immuable publié sur GHCR.
 Sur le poste de développement, configurer `.env` avec la base/le rôle
 `overlays_dev` et l'adresse LAN ou Tailscale. Ne jamais versionner ces fichiers.
 
@@ -75,9 +76,13 @@ CREATE DATABASE overlays_dev OWNER overlays_dev;
 Configurer sur le Geekom `PSQL_DB=overlays`, `PSQL_USER=overlays_release` et son
 mot de passe correspondant. Sur le poste de développement, utiliser
 `PSQL_DB=overlays_dev`, `PSQL_USER=overlays_dev` et son propre mot de passe.
-Démarrer ensuite le service de release et appliquer sa migration :
+Récupérer ensuite l'image publiée sur GHCR, puis appliquer sa migration. Si le
+package est privé, authentifier auparavant Docker sur Geekom avec un accès
+limité à `read:packages` ; saisir le token à l'invite et ne pas le mettre dans
+`.env` ni dans la commande :
 
 ```bash
+docker compose pull app
 docker compose run --rm app python -m app.infrastructure.database
 docker compose up -d app
 ```
@@ -96,7 +101,11 @@ sauvegardes.
   est requis pour fusionner.
 - Après fusion sur `main`, le workflow publie l'image sur GHCR avec les tags
   `sha-<commit>` et `main`.
-- Cette publication ne redémarre pas le service sur le Geekom.
+- Le Geekom doit épingler un tag `sha-<commit>` via `OVERLAYS_IMAGE_TAG`, puis
+  tirer l'image explicitement ; la publication seule ne redémarre pas le service.
+- Le workflow n'utilise aucune variable applicative : GitHub fournit le
+  `GITHUB_TOKEN` nécessaire à la publication. Les secrets runtime restent dans
+  le `.env` local du Geekom.
 
 ### Dépendance `libpq` sur l'ancienne DevBox NixOS
 
