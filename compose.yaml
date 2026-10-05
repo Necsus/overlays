@@ -6,6 +6,13 @@ services:
       POSTGRES_DB: postgres
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      # Paramètres utilisés par le bootstrap idempotent des rôles et bases.
+      OVERLAYS_RELEASE_DB: ${PSQL_DB:?Set PSQL_DB in .env}
+      OVERLAYS_RELEASE_USER: ${PSQL_USER:?Set PSQL_USER in .env}
+      OVERLAYS_RELEASE_PASSWORD: ${PSQL_PASSWORD:?Set PSQL_PASSWORD in .env}
+      OVERLAYS_DEV_DB: ${PSQL_DEV_DB:-overlays_dev}
+      OVERLAYS_DEV_USER: ${PSQL_DEV_USER:-overlays_dev}
+      OVERLAYS_DEV_PASSWORD: ${PSQL_DEV_PASSWORD:?Set PSQL_DEV_PASSWORD in .env}
     # Remplacer 192.168.1.112 si l'adresse LAN réservée du Geekom change ;
     # ne jamais utiliser 0.0.0.0 ou :: pour PostgreSQL.
     ports:

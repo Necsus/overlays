@@ -1,4 +1,4 @@
-name: Publish image to GHCR
+name: Publish and deploy to Geekom
 
 on:
   push:
@@ -38,3 +38,375 @@ jobs:
             .
           docker push "$image:sha-$GITHUB_SHA"
           docker push "$image:main"
+
+  deploy-geekom:
+    needs: publish-image
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-geekom
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    env:
+      GEEKOM_APP_DIR: ${{ vars.GEEKOM_APP_DIR }}
+      GEEKOM_DEPLOY_USER: ${{ vars.GEEKOM_DEPLOY_USER }}
+      GEEKOM_TAILSCALE_HOST: ${{ vars.GEEKOM_TAILSCALE_HOST }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate configuration and prepare runtime environment
+        env:
+          TWITCH_ENABLED: ${{ vars.TWITCH_ENABLED || secrets.TWITCH_ENABLED }}
+          TWITCH_CLIENT_ID: ${{ vars.TWITCH_CLIENT_ID || secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          TWITCH_BOT_ID: ${{ vars.TWITCH_BOT_ID || secrets.TWITCH_BOT_ID }}
+          TWITCH_OWNER_ID: ${{ vars.TWITCH_OWNER_ID || secrets.TWITCH_OWNER_ID }}
+          TWITCH_BOT_LOGIN: ${{ vars.TWITCH_BOT_LOGIN || secrets.TWITCH_BOT_LOGIN }}
+          TWITCH_ADMIN_REDIRECT_URI: ${{ vars.TWITCH_ADMIN_REDIRECT_URI || secrets.TWITCH_ADMIN_REDIRECT_URI }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          SESSION_COOKIE_SECURE: ${{ vars.SESSION_COOKIE_SECURE || secrets.SESSION_COOKIE_SECURE }}
+          SESSION_MAX_AGE_SECONDS: ${{ vars.SESSION_MAX_AGE_SECONDS || secrets.SESSION_MAX_AGE_SECONDS }}
+          TWITCH_COMMAND_PREFIX: ${{ vars.TWITCH_COMMAND_PREFIX || secrets.TWITCH_COMMAND_PREFIX }}
+          PSQL_DB: ${{ vars.PSQL_DB || secrets.PSQL_DB }}
+          PSQL_USER: ${{ vars.PSQL_USER || secrets.PSQL_USER }}
+          PSQL_PASSWORD: ${{ secrets.PSQL_PASSWORD }}
+          PSQL_DEV_DB: ${{ vars.PSQL_DEV_DB || secrets.PSQL_DEV_DB }}
+          PSQL_DEV_USER: ${{ vars.PSQL_DEV_USER || secrets.PSQL_DEV_USER }}
+          PSQL_DEV_PASSWORD: ${{ secrets.PSQL_DEV_PASSWORD }}
+          POSTGRES_ADMIN_USER: ${{ vars.POSTGRES_ADMIN_USER || secrets.POSTGRES_ADMIN_USER }}
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          TAILSCALE_IPV4: ${{ vars.GEEKOM_TAILSCALE_HOST }}
+          OVERLAYS_IMAGE_TAG: sha-${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          required=(
+            GEEKOM_APP_DIR GEEKOM_DEPLOY_USER GEEKOM_TAILSCALE_HOST
+            TWITCH_ENABLED TWITCH_CLIENT_ID TWITCH_CLIENT_SECRET TWITCH_BOT_ID TWITCH_OWNER_ID
+            TWITCH_BOT_LOGIN TWITCH_ADMIN_REDIRECT_URI SESSION_SECRET
+            SESSION_COOKIE_SECURE SESSION_MAX_AGE_SECONDS TWITCH_COMMAND_PREFIX
+            PSQL_DB PSQL_USER PSQL_PASSWORD PSQL_DEV_DB PSQL_DEV_USER
+            PSQL_DEV_PASSWORD POSTGRES_ADMIN_USER POSTGRES_ADMIN_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing GitHub variable or secret for $name"
+              exit 1
+            fi
+          done
+
+          if [[ "$GEEKOM_DEPLOY_USER" != "deploy" ]]; then
+            echo "::error::GEEKOM_DEPLOY_USER must be deploy for the configured Tailscale SSH policy"
+            exit 1
+          fi
+          if [[ "$GEEKOM_APP_DIR" != /home/deploy/apps/* \
+            || "$GEEKOM_APP_DIR" == *..* \
+            || "$GEEKOM_APP_DIR" =~ [^A-Za-z0-9_./-] ]]; then
+            echo "::error::GEEKOM_APP_DIR must be a simple path under /home/deploy/apps"
+            exit 1
+          fi
+          case "${TWITCH_ENABLED,,}" in
+            true|false) ;;
+            *) echo "::error::TWITCH_ENABLED must be true or false"; exit 1 ;;
+          esac
+          case "${SESSION_COOKIE_SECURE,,}" in
+            true|false) ;;
+            *) echo "::error::SESSION_COOKIE_SECURE must be true or false"; exit 1 ;;
+          esac
+          if [[ ! "$TWITCH_BOT_ID" =~ ^[0-9]+$ || ! "$TWITCH_OWNER_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::TWITCH_BOT_ID and TWITCH_OWNER_ID must be numeric Twitch IDs"
+            exit 1
+          fi
+          if [[ ! "$TWITCH_BOT_LOGIN" =~ ^[A-Za-z0-9_]{1,25}$ ]]; then
+            echo "::error::TWITCH_BOT_LOGIN must be a valid 1-25 character Twitch login"
+            exit 1
+          fi
+          if [[ ${#TWITCH_COMMAND_PREFIX} -lt 1 || ${#TWITCH_COMMAND_PREFIX} -gt 5 ]]; then
+            echo "::error::TWITCH_COMMAND_PREFIX must contain 1 to 5 characters"
+            exit 1
+          fi
+          if [[ ! "$SESSION_MAX_AGE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::SESSION_MAX_AGE_SECONDS must be a positive integer"
+            exit 1
+          fi
+          if [[ "$PSQL_DB" == "$PSQL_DEV_DB" \
+            || "$PSQL_DB" == postgres \
+            || "$PSQL_DB" == template0 \
+            || "$PSQL_DB" == template1 \
+            || "$PSQL_DEV_DB" == postgres \
+            || "$PSQL_DEV_DB" == template0 \
+            || "$PSQL_DEV_DB" == template1 ]]; then
+            echo "::error::Release and development database names must be distinct from each other and PostgreSQL system databases"
+            exit 1
+          fi
+          if [[ "$PSQL_USER" == "$PSQL_DEV_USER" \
+            || "$PSQL_USER" == "$POSTGRES_ADMIN_USER" \
+            || "$PSQL_DEV_USER" == "$POSTGRES_ADMIN_USER" \
+            || "$PSQL_USER" == postgres \
+            || "$PSQL_DEV_USER" == postgres \
+            || "$PSQL_USER" == pg_* \
+            || "$PSQL_DEV_USER" == pg_* ]]; then
+            echo "::error::Release, development, and administrator roles must be distinct and avoid PostgreSQL system roles"
+            exit 1
+          fi
+          if [[ "$PSQL_PASSWORD" == "$PSQL_DEV_PASSWORD" || "$PSQL_PASSWORD" == "$POSTGRES_ADMIN_PASSWORD" || "$PSQL_DEV_PASSWORD" == "$POSTGRES_ADMIN_PASSWORD" ]]; then
+            echo "::error::Use distinct secrets for the PostgreSQL administrator, release, and development roles"
+            exit 1
+          fi
+
+          printf 'APP_ENV_FILE=%s/overlays-deploy.env\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import ipaddress
+          import os
+          from pathlib import Path
+
+          try:
+              address = ipaddress.ip_address(os.environ["GEEKOM_TAILSCALE_HOST"])
+          except ValueError as exc:
+              raise SystemExit("GEEKOM_TAILSCALE_HOST must be an IPv4 address") from exc
+          if not isinstance(address, ipaddress.IPv4Address):
+              raise SystemExit("GEEKOM_TAILSCALE_HOST must be an IPv4 address")
+
+          keys = (
+              "TWITCH_ENABLED",
+              "TWITCH_CLIENT_ID",
+              "TWITCH_CLIENT_SECRET",
+              "TWITCH_BOT_ID",
+              "TWITCH_OWNER_ID",
+              "TWITCH_BOT_LOGIN",
+              "TWITCH_ADMIN_REDIRECT_URI",
+              "SESSION_SECRET",
+              "SESSION_COOKIE_SECURE",
+              "SESSION_MAX_AGE_SECONDS",
+              "TWITCH_COMMAND_PREFIX",
+              "PSQL_DB",
+              "PSQL_USER",
+              "PSQL_PASSWORD",
+              "PSQL_DEV_DB",
+              "PSQL_DEV_USER",
+              "PSQL_DEV_PASSWORD",
+              "POSTGRES_ADMIN_USER",
+              "POSTGRES_ADMIN_PASSWORD",
+              "TAILSCALE_IPV4",
+              "OVERLAYS_IMAGE_TAG",
+          )
+
+          def compose_value(value: str, key: str) -> str:
+              if "\n" in value or "\r" in value or any(ord(char) < 32 for char in value):
+                  raise SystemExit(f"{key} must be a single-line value")
+              escaped = (
+                  value.replace("\\", "\\\\")
+                  .replace('"', '\\"')
+                  .replace("$", "$$")
+              )
+              return f'"{escaped}"'
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "overlays-deploy.env"
+          content = "".join(
+              f"{key}={compose_value(os.environ[key], key)}\n" for key in keys
+          )
+          path.write_text(content, encoding="utf-8", newline="\n")
+          path.chmod(0o600)
+          PY
+
+      - name: Prepare temporary GHCR credentials
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/overlays-ghcr-config"
+          printf 'DOCKER_CONFIG_DIR=%s\n' "$docker_config" >> "$GITHUB_ENV"
+          install -d -m 700 "$docker_config"
+          printf '%s' "$GHCR_TOKEN" | docker --config "$docker_config" login ghcr.io \
+            --username "$GHCR_USERNAME" --password-stdin >/dev/null
+          chmod 600 "$docker_config/config.json"
+
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4.1.2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Upload deployment inputs to Geekom
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
+          remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          connected=false
+          for attempt in $(seq 1 12); do
+            if ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" true >/dev/null 2>&1; then
+              connected=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$connected" != true ]]; then
+            echo "::error::Tailscale SSH to the Geekom did not become available"
+            exit 1
+          fi
+          ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" \
+            "mkdir -p '$GEEKOM_APP_DIR' '$remote_stage' && chmod 750 '$GEEKOM_APP_DIR' && chmod 700 '$remote_stage'"
+          scp -B -o BatchMode=yes -o ConnectTimeout=20 compose.yaml \
+            "$target:$remote_stage/compose.yaml"
+          scp -B -o BatchMode=yes -o ConnectTimeout=20 "$APP_ENV_FILE" \
+            "$target:$remote_stage/.env"
+          scp -B -o BatchMode=yes -o ConnectTimeout=20 "$DOCKER_CONFIG_DIR/config.json" \
+            "$target:$remote_stage/docker-config.json"
+
+      - name: Bootstrap database, migrate, and deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
+          remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" \
+            "bash -s -- '$GEEKOM_APP_DIR' '$remote_stage'" <<'REMOTE'
+          set -euo pipefail
+          app_dir=$1
+          stage=$2
+          trap 'rm -rf -- "$stage"' EXIT
+
+          install -m 0644 "$stage/compose.yaml" "$stage/compose.yaml.ready"
+          install -m 0600 "$stage/.env" "$stage/.env.ready"
+          mv -f "$stage/compose.yaml.ready" "$app_dir/compose.yaml"
+          mv -f "$stage/.env.ready" "$app_dir/.env"
+          install -d -m 700 "$stage/docker"
+          install -m 0600 "$stage/docker-config.json" "$stage/docker/config.json"
+
+          cd "$app_dir"
+          export DOCKER_CONFIG="$stage/docker"
+          docker compose config --quiet
+          docker compose up -d --wait db
+
+          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          \set ON_ERROR_STOP on
+          \o /dev/null
+          \getenv release_db OVERLAYS_RELEASE_DB
+          \getenv release_user OVERLAYS_RELEASE_USER
+          \getenv release_password OVERLAYS_RELEASE_PASSWORD
+          \getenv dev_db OVERLAYS_DEV_DB
+          \getenv dev_user OVERLAYS_DEV_USER
+          \getenv dev_password OVERLAYS_DEV_PASSWORD
+
+          SELECT format(
+              'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+              :'release_user', :'release_password'
+          )
+          WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'release_user')
+          \gexec
+          SELECT format('CREATE DATABASE %I OWNER %I', :'release_db', :'release_user')
+          WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'release_db')
+          \gexec
+          SELECT format(
+              'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+              :'dev_user', :'dev_password'
+          )
+          WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')
+          \gexec
+          SELECT format('CREATE DATABASE %I OWNER %I', :'dev_db', :'dev_user')
+          WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'dev_db')
+          \gexec
+          SQL
+
+          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$OVERLAYS_RELEASE_DB"' <<'PREFLIGHT'
+          \set ON_ERROR_STOP on
+          \o /dev/null
+          DO $migration_guard$
+          DECLARE
+              schema_version integer;
+              has_giveaways boolean;
+          BEGIN
+              IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+                  SELECT MAX(version) INTO schema_version FROM public.schema_migrations;
+                  IF schema_version = 1 AND to_regclass('public.giveaways') IS NOT NULL THEN
+                      EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.giveaways)' INTO has_giveaways;
+                      IF has_giveaways THEN
+                          RAISE EXCEPTION 'Refusing migration: schema version 1 contains giveaways that migration version 2 deletes';
+                      END IF;
+                  END IF;
+              END IF;
+          END
+          $migration_guard$;
+          PREFLIGHT
+
+          docker compose pull app
+          docker compose stop app >/dev/null 2>&1 || true
+          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'CREDENTIALS'
+          \set ON_ERROR_STOP on
+          \o /dev/null
+          \getenv admin_user POSTGRES_USER
+          \getenv admin_password POSTGRES_PASSWORD
+          \getenv release_db OVERLAYS_RELEASE_DB
+          \getenv release_user OVERLAYS_RELEASE_USER
+          \getenv release_password OVERLAYS_RELEASE_PASSWORD
+          \getenv dev_db OVERLAYS_DEV_DB
+          \getenv dev_user OVERLAYS_DEV_USER
+          \getenv dev_password OVERLAYS_DEV_PASSWORD
+          SELECT format('ALTER ROLE %I WITH PASSWORD %L', :'admin_user', :'admin_password')
+          \gexec
+          SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'release_user', :'release_password')
+          \gexec
+          SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'dev_user', :'dev_password')
+          \gexec
+          SELECT format('ALTER DATABASE %I OWNER TO %I', :'release_db', :'release_user')
+          \gexec
+          SELECT format('ALTER DATABASE %I OWNER TO %I', :'dev_db', :'dev_user')
+          \gexec
+          CREDENTIALS
+          docker compose run --rm --no-deps app python -m app.infrastructure.database
+          docker compose run --rm --no-deps app python -c '
+          from app.core.configuration import configuration_from_settings
+          from app.core.environment import Settings
+          from app.infrastructure.configuration_store import ConfigurationStore
+
+          settings = Settings()
+          ConfigurationStore(settings.giveaway_config_file).save(
+              configuration_from_settings(settings)
+          )
+          '
+          docker compose up -d app
+
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T app python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)' >/dev/null 2>&1; then
+              echo "Application health check passed."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Application did not pass its internal health check; no container logs or secrets were printed."
+          exit 1
+          REMOTE
+
+      - name: Remove temporary remote deployment files
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GEEKOM_APP_DIR:-}" || -z "${GEEKOM_DEPLOY_USER:-}" || -z "${GEEKOM_TAILSCALE_HOST:-}" ]]; then
+            exit 0
+          fi
+          target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
+          remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" \
+            "rm -rf -- '$remote_stage'"
+
+      - name: Remove temporary runner credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${APP_ENV_FILE:-}" ]]; then
+            rm -f -- "$APP_ENV_FILE"
+          fi
+          if [[ -n "${DOCKER_CONFIG_DIR:-}" ]]; then
+            rm -rf -- "$DOCKER_CONFIG_DIR"
+          fi
