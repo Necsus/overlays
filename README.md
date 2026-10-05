@@ -31,81 +31,72 @@ python -m app.infrastructure.database
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### Déploiement Docker Compose sur Debian
+### Déploiement automatique sur le Geekom Debian
 
-Le Compose de ce dépôt est prévu pour le Geekom Debian : PostgreSQL 18.6 y
-héberge `overlays` (release) et `overlays_dev` (développement). L'application de
-release joint la base par le réseau backend ; le port 5432 est publié uniquement
-sur l'IPv4 LAN du Geekom et son IPv4 Tailscale pour les postes de développement.
-Aucun port PostgreSQL n'est redirigé depuis Internet. Créer `.env` sur le Geekom
-à partir du modèle, renseigner le compte admin PG et l'IPv4 Tailscale, puis
-configurer `PSQL_*` pour la base de release, `SESSION_COOKIE_SECURE=true` et
-`OVERLAYS_IMAGE_TAG=sha-<commit>` avec un tag immuable publié sur GHCR.
-Sur le poste de développement, configurer `.env` avec la base/le rôle
-`overlays_dev` et l'adresse LAN ou Tailscale. Ne jamais versionner ces fichiers.
+Chaque push sur `main` publie l'image GHCR avec un tag immuable `sha-<commit>`,
+puis le workflow `.github/workflows/publish-ghcr.yml` se connecte au Geekom avec
+Tailscale Workload Identity Federation et Tailscale SSH (aucune clé SSH
+persistante). Il transfère `compose.yaml`, génère le `.env` depuis la
+configuration GitHub, démarre PostgreSQL, crée de façon idempotente les rôles et
+bases `overlays` (release) et `overlays_dev` (développement), applique la
+migration, synchronise la configuration persistée, démarre l'image du commit et
+vérifie `/health` depuis le conteneur. Le service release est arrêté pendant la
+migration, donc un déploiement entraîne une brève interruption. Le contrôle des
+giveaways de schéma v1 s'exécute avant cet arrêt. PostgreSQL reste publié
+uniquement sur les adresses LAN et Tailscale définies dans Compose ; aucun port
+n'est redirigé vers Internet. L'application n'expose pas directement son port
+sur l'hôte.
 
-Cette séquence suppose des volumes Docker neufs. PostgreSQL n'applique les
-variables `POSTGRES_*` qu'à l'initialisation d'un répertoire de données vide ;
-ne pas réutiliser un volume existant sans en vérifier l'état. Au premier
-démarrage, lancer **uniquement** PostgreSQL :
+Le workflow lit les valeurs dans GitHub et écrit celles nécessaires dans un
+`.env` Geekom protégé en mode `600`, qui n'est pas versionné. Les secrets ne sont
+pas écrits dans les journaux. Comme toute configuration Docker, ils restent
+accessibles aux administrateurs du démon Docker sur l'hôte.
 
-```bash
-docker compose up -d db
-```
+#### Variables GitHub Actions requises
 
-L'image crée un compte admin dédié (`POSTGRES_ADMIN_USER`), distinct des rôles
-applicatifs. La création initiale des deux bases et rôles est manuelle. Ouvrir
-une session SQL avec le compte admin :
+Créer ces **Variables** dans les paramètres Actions du dépôt (les valeurs
+ci-dessous sont des exemples de format) :
 
-```bash
-docker compose exec db sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-```
+- `GEEKOM_APP_DIR` : `/home/deploy/apps/overlays`
+- `GEEKOM_DEPLOY_USER` : `deploy`
+- `GEEKOM_TAILSCALE_HOST` : IPv4 Tailscale du Geekom ; cette valeur sert aussi
+  pour la publication PostgreSQL côté Tailscale.
+- `POSTGRES_ADMIN_USER` (habituellement `overlays_admin`).
+- `PSQL_DB`, `PSQL_USER` pour la release (habituellement `overlays` et
+  `overlays_release`).
+- `PSQL_DEV_DB`, `PSQL_DEV_USER` pour le poste Windows (habituellement
+  `overlays_dev` pour les deux).
+- `TWITCH_ENABLED`, `TWITCH_CLIENT_ID`, `TWITCH_BOT_ID`, `TWITCH_OWNER_ID`,
+  `TWITCH_BOT_LOGIN`, `TWITCH_ADMIN_REDIRECT_URI`.
+- `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE_SECONDS` et
+  `TWITCH_COMMAND_PREFIX`.
 
-Dans `psql`, créer les rôles et bases séparés. `\password` demande les mots de
-passe sans les afficher ni les placer dans l'historique SQL :
+#### Secrets GitHub Actions requis
 
-```sql
-CREATE ROLE overlays_release LOGIN;
-\password overlays_release
-CREATE ROLE overlays_dev LOGIN;
-\password overlays_dev
-CREATE DATABASE overlays OWNER overlays_release;
-CREATE DATABASE overlays_dev OWNER overlays_dev;
-```
+- `TS_OAUTH_CLIENT_ID` et `TS_AUDIENCE` pour l'identité Tailscale ;
+- `TWITCH_CLIENT_SECRET` et `SESSION_SECRET` ;
+- `POSTGRES_ADMIN_PASSWORD`, `PSQL_PASSWORD` (rôle release) et
+  `PSQL_DEV_PASSWORD` (rôle développement).
 
-Configurer sur le Geekom `PSQL_DB=overlays`, `PSQL_USER=overlays_release` et son
-mot de passe correspondant. Sur le poste de développement, utiliser
-`PSQL_DB=overlays_dev`, `PSQL_USER=overlays_dev` et son propre mot de passe.
-Récupérer ensuite l'image publiée sur GHCR, puis appliquer sa migration. Si le
-package est privé, authentifier auparavant Docker sur Geekom avec un accès
-limité à `read:packages` ; saisir le token à l'invite et ne pas le mettre dans
-`.env` ni dans la commande :
+Le `GITHUB_TOKEN` utilisé pour publier et tirer l'image est fourni par GitHub
+Actions. Utiliser des mots de passe distincts pour les comptes admin, release et
+dev. `PSQL_DEV_PASSWORD` doit correspondre au `PSQL_PASSWORD` du `.env` local Windows
+pour que ce poste utilise le même rôle `overlays_dev`. Garder les noms de bases,
+rôles et le nom admin stables après l'initialisation du volume. Ne partager
+aucune de ces valeurs.
 
-```bash
-docker compose pull app
-docker compose run --rm app python -m app.infrastructure.database
-docker compose up -d app
-```
+À chaque déploiement, les réglages Twitch et le préfixe de commande de
+`settings.json` sont réécrits depuis les valeurs GitHub correspondantes. Les
+changements faits à ces réglages depuis l'interface admin seront donc remplacés
+au prochain déploiement. Modifier une variable ou un secret GitHub ne déclenche
+pas, à lui seul, un workflow : la nouvelle valeur sera prise en compte au
+prochain push sur `main`.
 
-L'exemple désactive Twitch par défaut. `TWITCH_ENABLED` initialise
-`data/settings.json` seulement à sa création : après cette première création,
-modifier `.env` ne change pas à lui seul la configuration persistée. Les volumes
-nommés conservent la base et les données de l'application ; ne pas les supprimer
-(`docker compose down -v`) sans décision explicite concernant les données. Le
-démarrage Compose ne configure ni reverse proxy, ni accès navigateur, ni
-sauvegardes.
-
-### GitHub Actions
-
-- Une PR vers `main` construit l'image sans la publier ; le contrôle `build-pr`
-  est requis pour fusionner.
-- Après fusion sur `main`, le workflow publie l'image sur GHCR avec les tags
-  `sha-<commit>` et `main`.
-- Le Geekom doit épingler un tag `sha-<commit>` via `OVERLAYS_IMAGE_TAG`, puis
-  tirer l'image explicitement ; la publication seule ne redémarre pas le service.
-- Le workflow n'utilise aucune variable applicative : GitHub fournit le
-  `GITHUB_TOKEN` nécessaire à la publication. Les secrets runtime restent dans
-  le `.env` local du Geekom.
+Les données persistent dans les volumes Docker ; le workflow ne lance jamais
+`docker compose down -v` et ne supprime aucun volume. Le contrôle `/health` est
+interne au conteneur. La configuration DNS et du proxy HTTPS reste séparée et
+n'est pas effectuée par ce workflow. La validation des PR continue de construire
+l'image sans publier ni utiliser de secrets.
 
 ### Dépendance `libpq` sur l'ancienne DevBox NixOS
 
@@ -132,9 +123,12 @@ un LAN non fiable, configurer un certificat serveur et utiliser `verify-full`
 avec une autorité de confiance ; `prefer` seul ne garantit pas le chiffrement.
 
 La migration versionnée crée les tables et enregistre la version du schéma,
-sans créer la base ou le rôle. La migration multi-streamer supprime les giveaways
-existants (données de test), puis ajoute l’isolation par streamer ; exécute-la
-avant de démarrer la nouvelle version. Ne lance pas en parallèle une ancienne
+sans créer la base ou le rôle. La migration multi-streamer v2 supprime les
+giveaways existants, car leur streamer propriétaire ne peut pas être deviné.
+Le workflow de déploiement refuse donc de migrer un schéma v1 qui contient des
+giveaways. Le premier déploiement Geekom part de volumes neufs. Pour toute autre
+base préexistante, vérifier et sauvegarder les données avant de lancer
+`python -m app.infrastructure.database`. Ne lance pas en parallèle une ancienne
 version de l’application sur le même schéma.
 
 - **Rôle de migration** : droit de créer des objets dans le schéma `public`.
