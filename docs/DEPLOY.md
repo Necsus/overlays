@@ -1,196 +1,52 @@
-# Déploiement de la release
+# Déploiement sur le Geekom
 
-Procédure historique pour publier une version figée sur
-**https://overlays.necsus.dev**, distincte du dépôt de développement.
-L'installation locale de dev reste dans le [README](../README.md).
+Le déploiement de production utilise Debian, Docker Compose et GitHub Actions. Un push sur `main` construit l’image, la publie sur GHCR, puis la déploie sur le Geekom via Tailscale et Tailscale SSH. La procédure NixOS historique n’est plus la procédure active.
 
-**État :** cette procédure décrit l'ancienne installation NixOS, confirmée
-sous `https://overlay.necsus.dev`. Le nom retenu pour le prochain déploiement est
-`https://overlays.necsus.dev` ; le DNS, le proxy HTTPS et le callback Twitch
-restent à basculer. Ces instructions ne sont pas une procédure Debian/Compose.
+Le workflow est [`../.github/workflows/publish-ghcr.yml`](../.github/workflows/publish-ghcr.yml). Il suppose que le Geekom est déjà préparé : Debian, Docker avec le plugin Compose, Tailscale actif, Tailscale SSH configuré et compte `deploy` autorisé à utiliser Docker. Le compte doit pouvoir écrire dans `/home/deploy/apps/overlays` (ou le chemin configuré). Ne pas modifier SSH, Tailscale ou le pare-feu dans le cadre de ce guide.
 
-## Décisions en vigueur
+## 1. Configurer GitHub Actions
 
-| Sujet | Choix |
-| --- | --- |
-| Code figé | `/srv/overlays`, commit Git explicite |
-| Processus | service systemd NixOS, `127.0.0.1:8000`, un worker, sans `--reload` |
-| Accès cible | Nginx HTTPS `overlays.necsus.dev` → `8000` |
-| Dev | historique : dépôt `/home/necsus/dev/overlays` ; cible actuelle : processus local sur `127.0.0.1:8001` |
-| PostgreSQL | historique : même base `overlays` ; cible Geekom : bases `overlays` (release) et `overlays_dev` (dev), rôles distincts |
+Dans **Settings → Secrets and variables → Actions**, ajouter les éléments ci-dessous. Les valeurs d’exemple indiquent seulement le format ; les secrets se saisissent directement dans GitHub et ne doivent pas être copiés dans le dépôt ou les journaux.
 
-Le partage de base décrit uniquement l'ancienne installation. La séparation
-release/dev sur le Geekom évite les migrations et données communes, mais ne
-sépare pas les événements Twitch : deux processus connectés au même canal peuvent
-traiter les mêmes commandes. Garder Twitch désactivé en développement sauf usage
-d'un canal de test distinct.
+### Variables
 
-Conserver des fichiers `.env` et `.tio.tokens.json` **distincts**. Ne jamais
-les versionner, les afficher ni les copier dans cette documentation.
+- `GEEKOM_APP_DIR` : chemin sous `/home/deploy/apps`, par exemple `/home/deploy/apps/overlays`.
+- `GEEKOM_DEPLOY_USER` : `deploy`.
+- `GEEKOM_TAILSCALE_HOST` : adresse IPv4 Tailscale du Geekom. Elle sert aussi à publier PostgreSQL sur Tailscale.
+- `POSTGRES_ADMIN_USER` : rôle d’administration PostgreSQL, par exemple `overlays_admin`.
+- `PSQL_DB`, `PSQL_USER` : base et rôle de release, par exemple `overlays` et `overlays_release`.
+- `PSQL_DEV_DB`, `PSQL_DEV_USER` : base et rôle pour le poste de développement, par exemple `overlays_dev` pour les deux.
+- `TWITCH_ENABLED`, `TWITCH_CLIENT_ID`, `TWITCH_BOT_ID`, `TWITCH_OWNER_ID`, `TWITCH_BOT_LOGIN`, `TWITCH_ADMIN_REDIRECT_URI`.
+- `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE_SECONDS`, `TWITCH_COMMAND_PREFIX`.
 
-## 1. Préparer NixOS
+### Secrets
 
-Ajouter un module, par exemple `/etc/nixos/overlays.nix`, et l'importer dans
-`/etc/nixos/configuration.nix` à côté de `overlay-proxy.nix`.
+- `TS_OAUTH_CLIENT_ID`, `TS_AUDIENCE` : identité Tailscale utilisée par l’action GitHub et configuration correspondante dans Tailscale.
+- `TWITCH_CLIENT_SECRET`, `SESSION_SECRET`.
+- `POSTGRES_ADMIN_PASSWORD`, `PSQL_PASSWORD` (release), `PSQL_DEV_PASSWORD` (développement).
 
-Ne pas ouvrir le port `8000` dans le pare-feu : Nginx y accède en local. Ne
-pas modifier SSH, Tailscale ni le proxy existant.
+Le `GITHUB_TOKEN` est fourni automatiquement à Actions. Le paquet GHCR doit être accessible au workflow de déploiement. Dans la politique Tailscale, autoriser le tag `tag:ci` à joindre le Geekom comme utilisateur `deploy` via Tailscale SSH.
 
-```nix
-{ config, pkgs, ... }:
+Utiliser des rôles et mots de passe distincts pour l’administration PostgreSQL, la release et le développement. `PSQL_DEV_PASSWORD` doit correspondre au mot de passe du rôle de développement dans le `.env` du poste local. Garder les noms de bases, rôles et rôle admin stables une fois le volume PostgreSQL initialisé.
 
-{
-  users.groups.overlays = { };
-  users.users.overlays = {
-    isSystemUser = true;
-    group = "overlays";
-    home = "/srv/overlays";
-  };
+Pour Twitch, `TWITCH_ADMIN_REDIRECT_URI` doit correspondre exactement à l’URL déclarée dans la console Twitch, généralement `https://overlays.necsus.dev/auth/twitch/callback`. Ne pas activer Twitch en développement sur le même canal que la release.
 
-  systemd.services.overlays = {
-    description = "NecsusDev Overlays (release)";
-    after = [ "network.target" "postgresql.service" ];
-    wants = [ "postgresql.service" ];
-    wantedBy = [ "multi-user.target" ];
-    # ctypes.util.find_library (Psycopg) a besoin de `ld` ; LD_LIBRARY_PATH seul ne suffit pas.
-    path = [ pkgs.binutils ];
-    environment.LD_LIBRARY_PATH = "${config.services.postgresql.package.lib}/lib";
-    serviceConfig = {
-      Type = "simple";
-      User = "overlays";
-      Group = "overlays";
-      WorkingDirectory = "/srv/overlays";
-      ExecStart = "/srv/overlays/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000";
-      Restart = "on-failure";
-      RestartSec = "5s";
-      NoNewPrivileges = true;
-      PrivateTmp = true;
-    };
-  };
-}
-```
+## 2. Déclencher et suivre un déploiement
 
-Le service échouera tant que `/srv/overlays` n'est pas installé : c'est
-attendu. Construire **sans activer** :
+Une PR vers `main` lance seulement une construction de vérification. Le déploiement se déclenche après un push sur `main` ; modifier une variable ou un secret GitHub ne déclenche pas de workflow. Après une modification de configuration, lancer le workflow en poussant un changement autorisé sur `main`.
 
-```bash
-sudo nixos-rebuild build
-```
+Le job de déploiement valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et les fichiers nécessaires. Sur le Geekom, il démarre PostgreSQL, crée ou met à jour les rôles et bases, vérifie le garde-fou de migration, tire l’image du commit, applique la migration et démarre l’application. Il contrôle ensuite `/health` depuis le conteneur.
 
-Relire le module, puis seulement :
+La configuration Twitch et le préfixe de commande persistés dans `settings.json` sont réécrits depuis les variables GitHub à chaque déploiement. Les valeurs modifiées depuis l’interface admin peuvent donc être remplacées. L’application est arrêtée pendant la migration : prévoir une brève interruption.
 
-```bash
-sudo nixos-rebuild switch
-```
+Consulter l’onglet **Actions** pour le résultat. Le workflow évite d’imprimer les valeurs secrètes et ne dump pas les journaux des conteneurs. En cas d’échec, partager le nom de l’étape et le message non sensible, jamais les fichiers `.env`, tokens ou logs contenant des secrets.
 
-Vérifier que l'utilisateur système existe : `getent passwd overlays`.
+## 3. Données, réseau et limites
 
-## 2. Installer le code figé
+Les données PostgreSQL et la configuration d’exécution de l’application sont stockées dans des volumes Docker persistants. Le workflow ne fait pas `docker compose down -v` et ne supprime pas ces volumes. Le port PostgreSQL est publié sur l’adresse LAN prévue dans `compose.yaml` et sur l’adresse Tailscale ; il n’est pas publié sur Internet. L’application ne publie pas directement son port sur l’hôte.
 
-Depuis une session qui peut cloner le dépôt privé :
+Le contrôle `/health` est interne au conteneur : il ne valide ni le DNS, ni le proxy HTTPS, ni OAuth Twitch/OBS. La configuration du domaine et du proxy reste distincte du workflow. Après le déploiement, valider séparément l’accès HTTPS et, si nécessaire, le parcours Twitch/OBS.
 
-```bash
-sudo mkdir -p /srv/overlays
-sudo chown necsus:users /srv/overlays
-git clone git@github.com:Necsus/overlays.git /srv/overlays
-# Remplacer par le commit réellement retenu :
-git -C /srv/overlays checkout --detach e9a274339cdf3a9dd3d8288d29b708f0dd2acddc
-```
+Les bases `overlays` (release) et `overlays_dev` (développement) sont distinctes, avec des rôles séparés. Le contrôle de migration refuse le passage du schéma v1 si des giveaways existants seraient supprimés. Toute base préexistante mérite une sauvegarde vérifiée avant une migration.
 
-Ne pas y copier `.env`, `.tio.tokens.json` ni d'autres secrets depuis le
-dépôt de développement.
-
-```bash
-cd /srv/overlays
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-pg_lib=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths 'nixpkgs#postgresql^lib') && export LD_LIBRARY_PATH="$pg_lib/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-python -c "import psycopg; print('Psycopg OK')"
-cp -n .env.example .env
-chmod 600 .env
-```
-
-Compléter `.env` **sur la machine**, sans coller de secrets dans le terminal
-ni dans un ticket :
-
-- `PSQL_*` : mêmes valeurs que l'application actuelle (`PSQL_DB=overlays`).
-- `TWITCH_ADMIN_REDIRECT_URI=https://overlays.necsus.dev/auth/twitch/callback`
-- `SESSION_COOKIE_SECURE=true`
-- `SESSION_SECRET` : nouvelle valeur, distincte de la dev
-- Identifiants de l'application Twitch : les mêmes que pour le live, avec ce
-  callback déclaré dans la console Twitch
-
-Créer le schéma si besoin (idempotent si la version 1 existe déjà) :
-
-```bash
-python -m app.infrastructure.database
-```
-
-Puis transférer la propriété au compte du service :
-
-```bash
-sudo chown -R overlays:overlays /srv/overlays
-sudo chmod 700 /srv/overlays
-sudo chmod 600 /srv/overlays/.env
-```
-
-## 3. Activer la release
-
-Avant le démarrage : désactiver Twitch dans le `.env` de **dev** ou arrêter le
-processus sur `8001` s'il a Twitch activé.
-
-```bash
-sudo systemctl restart overlays.service
-sudo systemctl status overlays.service --no-pager
-```
-
-Contrôles attendus, **sans exposer de secrets** :
-
-```bash
-systemctl is-active overlays.service
-curl --noproxy '*' --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/health
-curl --noproxy '*' --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://overlays.necsus.dev/health
-```
-
-Les deux `/health` doivent répondre `200`. Confirmer ensuite
-https://overlays.necsus.dev/admin depuis le navigateur.
-
-Un `502` Nginx signifie que le service n'écoute pas encore sur `8000`. Consulter
-`journalctl -u overlays.service -e` sans y coller de fichier d'environnement.
-
-Le parcours Twitch (bot, streamer, source OBS) n'est validé qu'après connexion
-réelle sur le domaine de release. La commande Python de dev sur `8001` reste
-indépendante.
-
-## 4. Mettre à jour une release déjà installée
-
-Le script `scripts/update-release.sh` enchaîne fetch local, checkout détaché,
-dépendances, migration et redémarrage. Il ne lit pas, n'affiche pas et ne
-copie pas `.env` ni `.tio.tokens.json`. Nginx, SSH et Tailscale restent
-intacts.
-
-```bash
-cd /home/necsus/dev/overlays
-# Le commit doit déjà exister dans ce dépôt ; les fichiers non commités ne
-# partent pas.
-git rev-parse HEAD
-./scripts/update-release.sh HEAD
-```
-
-Ajouter `-y` pour ignorer la confirmation. Le script transmet le commit via un
-bundle Git lisible par l'utilisateur `overlays` (son compte n'a pas accès à
-`/home/necsus`). `libpq` est repris depuis `LD_LIBRARY_PATH` du service.
-
-Contrôles attendus : `overlays.service` actif, `http://127.0.0.1:8000/health`
-et `https://overlays.necsus.dev/health` en HTTP 200.
-
-Toute migration SQL doit rester compatible avec un retour arrière, ou être
-refusée. Un redémarrage de la release n'arrête pas Nginx ni la dev.
-
-## 5. Hors périmètre actuel
-
-- Base PostgreSQL distincte pour la dev
-- Sauvegardes automatisées et restauration vérifiée
-- Supervision (latences, files, état Twitch)
-- Isolation des tokens et des données entre environnements
+Conserver les secrets uniquement dans GitHub et les environnements prévus. Les administrateurs du démon Docker sur le Geekom peuvent accéder aux variables d’environnement des conteneurs. Pour sauvegardes et restauration, voir [ADR-0011](adr/0011-exploitation-durable.md) et le [README](../README.md).

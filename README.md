@@ -1,299 +1,58 @@
 # NecsusDevOverlays
 
-Plateforme d'overlays Twitch pour OBS, pilotés depuis le chat et regroupés dans
-une administration commune.
+Plateforme d’overlays Twitch pour OBS, pilotés depuis le chat et administrés par streamer. Le giveaway (inscriptions, tirages manuels ou chronométrés) est disponible ; le plugin Chat est en préparation.
 
-- **Giveaway** : tirages manuels ou chronométrés, inscriptions uniques et
-  gagnants multiples.
-- **Chat** : plugin en préparation, pas encore disponible.
+## Développement local
 
-L'application prend en charge plusieurs streamers simultanément avec un bot
-Twitch global. Chaque streamer possède son giveaway, ses préférences de commande,
-son historique et ses clés OBS indépendants.
-
-## Installation et lancement
-
-Sur le poste de développement local, depuis le clone du dépôt, avec Python
-3.11 ou plus récent et un accès au PostgreSQL 18 du Geekom via le LAN ou
-Tailscale. La base de développement y est distincte de celle de release.
+Prérequis : Python 3.11+ et accès au PostgreSQL 18 du Geekom. La release utilise `overlays` ; le développement utilise la base distincte `overlays_dev`.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-# Première installation seulement, si .env n'existe pas :
 cp -n .env.example .env
-# Compléter soi-même .env ; pour le développement, PSQL_DB=overlays_dev
-# et PSQL_USER/PSQL_PASSWORD doivent désigner le rôle de développement.
-python -c "import psycopg; print('Psycopg OK')"
-# Créer/mettre à jour le schéma avant de lancer l'application :
+# Configurer .env localement ; ne pas partager les secrets.
 python -m app.infrastructure.database
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### Déploiement automatique sur le Geekom Debian
+Pour le développement, `PSQL_DB` et `PSQL_USER`/`PSQL_PASSWORD` doivent désigner le rôle de développement. Garder Twitch désactivé si la release utilise le même canal : deux bots pourraient traiter les mêmes événements.
 
-Chaque push sur `main` publie l'image GHCR avec un tag immuable `sha-<commit>`,
-puis le workflow `.github/workflows/publish-ghcr.yml` se connecte au Geekom avec
-Tailscale Workload Identity Federation et Tailscale SSH (aucune clé SSH
-persistante). Il transfère `compose.yaml`, génère le `.env` depuis la
-configuration GitHub, démarre PostgreSQL, crée de façon idempotente les rôles et
-bases `overlays` (release) et `overlays_dev` (développement), applique la
-migration, synchronise la configuration persistée, démarre l'image du commit et
-vérifie `/health` depuis le conteneur. Le service release est arrêté pendant la
-migration, donc un déploiement entraîne une brève interruption. Le contrôle des
-giveaways de schéma v1 s'exécute avant cet arrêt. PostgreSQL reste publié
-uniquement sur les adresses LAN et Tailscale définies dans Compose ; aucun port
-n'est redirigé vers Internet. L'application n'expose pas directement son port
-sur l'hôte.
+## Déploiement sur le Geekom
 
-Le workflow lit les valeurs dans GitHub et écrit celles nécessaires dans un
-`.env` Geekom protégé en mode `600`, qui n'est pas versionné. Les secrets ne sont
-pas écrits dans les journaux. Comme toute configuration Docker, ils restent
-accessibles aux administrateurs du démon Docker sur l'hôte.
+Un push sur `main` publie une image taguée par commit sur GHCR, puis déclenche le déploiement Debian/Compose via GitHub Actions, Tailscale et Tailscale SSH. La configuration requise et les étapes sont dans [docs/DEPLOY.md](docs/DEPLOY.md). Les PR vers `main` construisent l’image sans la publier.
 
-#### Variables GitHub Actions requises
+La release et le développement ont des bases et des rôles PostgreSQL distincts. Les données persistent dans des volumes Docker ; le workflow ne les supprime pas. Le déploiement peut interrompre brièvement l’application pendant la migration. DNS et proxy HTTPS sont configurés séparément.
 
-Créer ces **Variables** dans les paramètres Actions du dépôt (les valeurs
-ci-dessous sont des exemples de format) :
+## Administration et OBS
 
-- `GEEKOM_APP_DIR` : `/home/deploy/apps/overlays`
-- `GEEKOM_DEPLOY_USER` : `deploy`
-- `GEEKOM_TAILSCALE_HOST` : IPv4 Tailscale du Geekom ; cette valeur sert aussi
-  pour la publication PostgreSQL côté Tailscale.
-- `POSTGRES_ADMIN_USER` (habituellement `overlays_admin`).
-- `PSQL_DB`, `PSQL_USER` pour la release (habituellement `overlays` et
-  `overlays_release`).
-- `PSQL_DEV_DB`, `PSQL_DEV_USER` pour le poste Windows (habituellement
-  `overlays_dev` pour les deux).
-- `TWITCH_ENABLED`, `TWITCH_CLIENT_ID`, `TWITCH_BOT_ID`, `TWITCH_OWNER_ID`,
-  `TWITCH_BOT_LOGIN`, `TWITCH_ADMIN_REDIRECT_URI`.
-- `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE_SECONDS` et
-  `TWITCH_COMMAND_PREFIX`.
+- `/admin` : connexion Twitch et gestion de l’overlay.
+- `/health` : contrôle de santé du service.
+- `/docs` : documentation OpenAPI.
 
-#### Secrets GitHub Actions requis
+Déclarer dans la console Twitch le callback exact configuré, généralement `https://overlays.necsus.dev/auth/twitch/callback`. Autoriser le compte bot via `/auth/twitch/bot/login`, puis le streamer dans `/admin`. Copier le lien généré du plugin Giveaway dans une source navigateur OBS ; ce lien contient une clé confidentielle. Sa rotation invalide l’ancien lien.
 
-- `TS_OAUTH_CLIENT_ID` et `TS_AUDIENCE` pour l'identité Tailscale ;
-- `TWITCH_CLIENT_SECRET` et `SESSION_SECRET` ;
-- `POSTGRES_ADMIN_PASSWORD`, `PSQL_PASSWORD` (rôle release) et
-  `PSQL_DEV_PASSWORD` (rôle développement).
+Commandes par défaut :
 
-Le `GITHUB_TOKEN` utilisé pour publier et tirer l'image est fourni par GitHub
-Actions. Utiliser des mots de passe distincts pour les comptes admin, release et
-dev. `PSQL_DEV_PASSWORD` doit correspondre au `PSQL_PASSWORD` du `.env` local Windows
-pour que ce poste utilise le même rôle `overlays_dev`. Garder les noms de bases,
-rôles et le nom admin stables après l'initialisation du volume. Ne partager
-aucune de ces valeurs.
-
-À chaque déploiement, les réglages Twitch et le préfixe de commande de
-`settings.json` sont réécrits depuis les valeurs GitHub correspondantes. Les
-changements faits à ces réglages depuis l'interface admin seront donc remplacés
-au prochain déploiement. Modifier une variable ou un secret GitHub ne déclenche
-pas, à lui seul, un workflow : la nouvelle valeur sera prise en compte au
-prochain push sur `main`.
-
-Les données persistent dans les volumes Docker ; le workflow ne lance jamais
-`docker compose down -v` et ne supprime aucun volume. Le contrôle `/health` est
-interne au conteneur. La configuration DNS et du proxy HTTPS reste séparée et
-n'est pas effectuée par ce workflow. La validation des PR continue de construire
-l'image sans publier ni utiliser de secrets.
-
-### Dépendance `libpq` sur l'ancienne DevBox NixOS
-
-Psycopg a besoin de `libpq`. Les commandes ci-dessous sont spécifiques à
-l'ancienne DevBox NixOS ; elles ne configurent ni macOS ni le conteneur Debian.
-L'installation de `libpq` sur le poste local actuel reste à vérifier.
-
-En **zsh**, une fois par machine, ajouter dans `~/.zshrc` :
-
-```zsh
-[[ -f ~/dev/overlays/scripts/zsh-libpq.zsh ]] && source ~/dev/overlays/scripts/zsh-libpq.zsh
-```
-
-Puis `source ~/.zshrc` (ou ouvrir un nouveau terminal). Le script reprend
-`LD_LIBRARY_PATH` de `overlays.service`, sans `nix-shell` et sans chemin
-`/nix/store/...` figé. `shell.nix` reste disponible si tu utilises `nix-shell`.
-La release n'en dépend pas : elle déclare `libpq` dans le service systemd.
-
-Le modèle `.env.example` décrit les paramètres `PSQL_*` : **hôte sans port**,
-port séparé, base, utilisateur, mot de passe et mode TLS. Ne pas placer le mot
-de passe dans une commande ou une URL partagée. Le chemin Tailscale est chiffré ;
-le TLS PostgreSQL pour l'accès LAN reste à configurer. Avant toute connexion sur
-un LAN non fiable, configurer un certificat serveur et utiliser `verify-full`
-avec une autorité de confiance ; `prefer` seul ne garantit pas le chiffrement.
-
-La migration versionnée crée les tables et enregistre la version du schéma,
-sans créer la base ou le rôle. La migration multi-streamer v2 supprime les
-giveaways existants, car leur streamer propriétaire ne peut pas être deviné.
-Le workflow de déploiement refuse donc de migrer un schéma v1 qui contient des
-giveaways. Le premier déploiement Geekom part de volumes neufs. Pour toute autre
-base préexistante, vérifier et sauvegarder les données avant de lancer
-`python -m app.infrastructure.database`. Ne lance pas en parallèle une ancienne
-version de l’application sur le même schéma.
-
-- **Rôle de migration** : droit de créer des objets dans le schéma `public`.
-- **Rôle applicatif** : lecture/écriture des tables et usage de la séquence des
-  participants, sans superutilisateur.
-- En développement, le propriétaire de la base dédiée peut remplir les deux
-  usages.
-
-En cas d'échec, la migration affiche les noms des paramètres invalides ou une
-catégorie d'erreur SQL, jamais les valeurs ni le message brut du pilote. Sans
-code d'erreur exploitable, le diagnostic reste général.
-
-Le démarrage refuse un PostgreSQL indisponible ou un schéma non
-initialisé/incompatible, sans repli vers SQLite. Garder **un seul worker
-Uvicorn** ; `--reload` est réservé au développement. Après un déplacement du
-projet, recréer le virtualenv.
-
-### Dépannage PostgreSQL sur NixOS
-
-- **`libpq library not found`** : vérifier que `~/.zshrc` source
-  `scripts/zsh-libpq.zsh`, puis ouvrir un **nouveau** terminal zsh (pas un
-  `nix-shell`). `echo $LD_LIBRARY_PATH` doit contenir le `lib` PostgreSQL.
-  Ne pas figer un chemin `/nix/store/...`. La release déclare `libpq` dans
-  `overlays.service`.
-- **`no pg_hba.conf entry`** : le serveur répond mais aucune règle ne correspond
-  à la connexion tentée. Déclarer l'accès dans
-  `services.postgresql.authentication`, pas dans le fichier généré. Limiter la
-  règle à la base, au rôle et à l'adresse nécessaires (`127.0.0.1/32` pour IPv4
-  local), avec authentification par mot de passe SCRAM. Vérifier l'ordre des
-  règles et le choix `host`/`hostssl` selon la politique TLS ; ne pas utiliser
-  `trust` ni ouvrir le réseau pour contourner l'erreur.
-- **Erreur de connexion générique** : un contrôle de disponibilité ne valide pas
-  les identifiants. Tester au besoin avec
-  `psql -h 127.0.0.1 -p 5432 -U "ROLE_FICTIF" -d "BASE_FICTIVE" -W -c 'SELECT 1;'`,
-  en remplaçant localement les noms et l'adresse. Saisir le mot de passe
-  uniquement à l'invite ; ne partager aucun secret ou configuration réelle.
-
-### Développement et release
-
-La commande ci-dessus lance le développement sur `127.0.0.1:8001`, accessible
-via `http://127.0.0.1:8001` sur la machine de développement. Le sous-domaine
-`overlay-dev.necsus.dev` n'est plus utilisé. L'application se connecte à
-`overlays_dev` sur le Geekom : utiliser `192.168.1.112` comme `PSQL_HOST` à la
-maison, ou l'adresse/nom Tailscale du Geekom à l'extérieur.
-
-Le nom de production retenu est **[overlays.necsus.dev](https://overlays.necsus.dev)**.
-L'ancienne release NixOS utilisait `overlay.necsus.dev` ; son basculement vers le
-nouveau nom et la nouvelle installation Debian restent à effectuer. La procédure
-NixOS historique est dans [docs/DEPLOY.md](docs/DEPLOY.md) et ne s'applique pas
-au déploiement Docker Compose sur Debian.
-
-La release utilise PostgreSQL `overlays`, et le développement local sa base
-`overlays_dev`, dans la même instance PostgreSQL 18 du Geekom. Les rôles et
-mots de passe sont distincts. Même avec des bases séparées, ne pas activer Twitch
-simultanément sur les deux instances pour le même canal : elles pourraient traiter
-les mêmes événements.
-
-Les instructions Twitch/OBS ci-dessous utilisent le domaine de production.
-Pour le développement, garder Twitch désactivé sauf si un callback OAuth local
-spécifique a été déclaré et validé dans la console Twitch ; ne pas réutiliser le
-callback de production.
-
-| Chemin | Usage |
-| --- | --- |
-| `/admin` | Connexion Twitch et gestion du lien OBS |
-| `/health` | Vérification que le service répond |
-| `/docs` | Documentation OpenAPI |
-
-## Connecter Twitch et OBS
-
-1. Déclarer dans l'application Twitch le callback exact :
-   `https://overlays.necsus.dev/auth/twitch/callback`.
-2. Démarrer le service avec Twitch activé selon `.env.example`.
-3. Ouvrir `/auth/twitch/bot/login` sur le domaine HTTPS et autoriser **le compte
-   bot configuré**, avec `user:read:chat`, `user:write:chat` et `user:bot`.
-4. Ouvrir `/admin` avec le compte streamer et accorder `channel:bot`.
-5. Générer le lien du plugin Giveaway et le copier dans une **source navigateur
-   OBS** :
-
-```text
-https://overlays.necsus.dev/plugins/giveaway/overlay#<clé-OBS>
-```
-
-Le lien est confidentiel. Après génération, il reste recopiable après rechargement
-dans le même onglet grâce à `sessionStorage`, si le compte et la rotation sont
-inchangés. Si ce stockage est bloqué, copiez-le avant de recharger. La déconnexion
-efface cette copie locale, mais ne coupe pas le giveaway. Perdre la copie locale
-ne révoque pas le lien dans OBS. Le régénérer invalide l'ancien lien et déconnecte
-ses sources. Les connexions OBS restent propres à chaque streamer ; connecter
-un autre compte ne déconnecte pas les sources des autres.
-
-Le rendu se personnalise dans le champ **CSS personnalisé** d'OBS. Éléments
-disponibles : `#giveaway`, `#lot`, `#status`, `#participants`, `#winner`,
-`#countdown`. Le compteur est masqué sans durée ou après clôture.
-
-## Commandes Giveaway
-
-| Commande | Accès | Effet |
+| Commande | Accès | Fonction |
 | --- | --- | --- |
-| `!galot <lot>` | Streamer | Prépare le lot et affiche l'overlay. |
-| `!gastart [secondes]` | Streamer | Ouvre les inscriptions, avec une durée facultative. |
-| `!join` | Viewer | Inscrit le viewer une seule fois. |
-| `!gapull` | Streamer | Ferme les inscriptions et tire un gagnant, puis ajoute un gagnant inédit à chaque nouvel appel. |
-| `!gastop` | Streamer | Termine le giveaway et masque l'overlay. |
+| `!galot <lot>` | Streamer | Définit le lot |
+| `!gastart [secondes]` | Streamer | Ouvre les inscriptions, durée facultative (1 à 604800 s) |
+| `!join` | Viewer | S’inscrit une fois |
+| `!gapull` | Streamer | Ferme les inscriptions et tire un gagnant inédit |
+| `!gastop` | Streamer | Termine le giveaway |
 
-Le préfixe `!` est le défaut et peut être personnalisé depuis les préférences
-Giveaway de l’administration ; il est propre à chaque streamer.
+Le préfixe est configurable dans l’administration. L’échéance et les résultats sont persistés ; un tirage automatique a lieu à l’expiration si des participants sont inscrits.
 
-Exemple : `!galot Clavier mécanique`, puis `!gastart 60`.
+## Sécurité et données
 
-- La durée doit être un entier de **1 à 604800 secondes** (7 jours). `!gastart`
-  seul n'active aucun minuteur.
-- À l'échéance, un gagnant est tiré automatiquement. Sans participant, le
-  giveaway est annulé et masqué.
-- Un tirage manuel réussi ou `!gastop` annule le minuteur.
-- Après le premier tirage, les inscriptions restent fermées ; les tirages
-  suivants excluent les gagnants précédents.
-- L'échéance et les gagnants sont conservés après redémarrage. Une échéance
-  dépassée est traitée à la reprise.
-- Une inscription traitée après l'échéance est refusée. Le serveur décide du
-  tirage ; garder l'horloge du PC OBS à l'heure pour un compteur visuel correct.
-  Le premier tick peut afficher `durée + 1` (arrondi supérieur) ; l'échéance
-  serveur reste exacte.
+Ne jamais versionner, afficher ou partager `.env`, `.tio.tokens.json` ou une clé OBS. `.env.example` est le modèle partageable. PostgreSQL contient les identités, giveaways, participants, gagnants et empreintes des clés OBS ; les tokens Twitch restent hors de la base.
 
-## Secrets et données
-
-Ne jamais versionner, partager ni afficher le contenu de `.env` ou
-`.tio.tokens.json`. Seul `.env.example` sert de référence partageable pour les
-variables attendues. Les liens OBS sont également confidentiels.
-
-Les identités, giveaways, participants, gagnants et empreintes des clés OBS
-résident désormais dans PostgreSQL. `data/settings.json` reste une configuration
-locale ; les tokens Twitch restent hors de la base SQL.
-
-L’ancienne version de test SQLite a été supprimée avec accord. La migration
-multi-streamer supprime aussi les giveaways PostgreSQL préexistants de test ; les
-identités Twitch et clés OBS sont conservées. Les contextes sont restaurés au
-démarrage ; reconnecte un compte dans `/admin` si son autorisation Twitch doit
-être renouvelée. Les liens OBS existants restent rattachés à leur streamer.
-
-### Sauvegarde PostgreSQL
-
-Utiliser `pg_dump` au format personnalisé (`-Fc`) et conserver les sauvegardes
-hors du dépôt, avec des permissions restreintes et une durée de conservation
-définie. Fournir les identifiants par un mécanisme confidentiel, jamais dans
-l'historique du terminal. `pg_dump` n'interprète pas les variables applicatives
-`PSQL_*` du fichier `.env`.
-
-Vérifier la restauration avec `pg_restore` vers **une autre base vide**, puis
-comparer les données et démarrer une instance isolée sans Twitch réel. Ne jamais
-essayer une restauration destructive sur la base utilisée. L'automatisation et
-la validation réelle restent dans
-[ADR-0011](docs/adr/0011-exploitation-durable.md) ; les sauvegardes SQL ne
-couvrent pas les fichiers locaux de configuration et de tokens, à protéger
-séparément.
+Les sauvegardes PostgreSQL doivent être conservées hors du dépôt et leur restauration vérifiée vers une autre base vide. La procédure et les contrôles restant à valider figurent dans [ADR-0011](docs/adr/0011-exploitation-durable.md).
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) : fonctionnement actuel, stockage,
-  sécurité et limites.
-- [Déploiement](docs/DEPLOY.md) : publication de la release sur NixOS.
-- [Roadmap](docs/ROADMAP.md) : priorités et index des décisions (ADR).
-- [AGENTS.md](AGENTS.md) : consignes de travail pour les agents IA.
-
-## Licence
-
-[MIT](LICENSE) — dépôt
-[Necsus/overlays](https://github.com/Necsus/overlays).
+- [Déploiement Geekom](docs/DEPLOY.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Licence MIT](LICENSE)
