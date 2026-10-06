@@ -41,6 +41,7 @@ jobs:
 
   deploy-geekom:
     needs: publish-image
+    environment: production
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-geekom
