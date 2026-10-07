@@ -245,32 +245,17 @@ jobs:
           tailscale_config_dir="$RUNNER_TEMP/overlays-tailscale-ssh"
           install -d -m 700 "$tailscale_config_dir/tailscale"
           ssh_known_hosts="$tailscale_config_dir/tailscale/ssh_known_hosts"
-          ssh_diagnostic="$(mktemp "${RUNNER_TEMP:-/tmp}/geekom-ssh.XXXXXX")"
-          trap 'rm -f -- "$ssh_diagnostic"' EXIT
           connected=false
-          ssh_status=0
           for attempt in $(seq 1 12); do
             if sudo env XDG_CONFIG_HOME="$tailscale_config_dir" \
-              tailscale ssh "$target" true >/dev/null 2>"$ssh_diagnostic"; then
+              tailscale ssh "$target" true >/dev/null 2>&1; then
               connected=true
               break
-            else
-              ssh_status=$?
             fi
             sleep 5
           done
           if [[ "$connected" != true ]]; then
-            echo "::error::Tailscale SSH to the Geekom did not become available (ssh exit code $ssh_status)"
-            if [[ -s "$ssh_diagnostic" ]]; then
-              echo "::group::Last SSH probe diagnostic"
-              stop_commands_token="ssh-diagnostic-$(python -c 'import secrets; print(secrets.token_hex(16))')"
-              echo "::stop-commands::$stop_commands_token"
-              cat "$ssh_diagnostic"
-              echo "::$stop_commands_token::"
-              echo "::endgroup::"
-            else
-              echo "The SSH probe returned no diagnostic output."
-            fi
+            echo "::error::Tailscale SSH to the Geekom did not become available"
             exit 1
           fi
           if [[ ! -s "$ssh_known_hosts" ]]; then
@@ -450,4 +435,7 @@ jobs:
           fi
           if [[ -n "${DOCKER_CONFIG_DIR:-}" ]]; then
             rm -rf -- "$DOCKER_CONFIG_DIR"
+          fi
+          if [[ -n "${RUNNER_TEMP:-}" ]]; then
+            rm -rf -- "$RUNNER_TEMP/overlays-tailscale-ssh"
           fi
