@@ -35,7 +35,7 @@ Pour Twitch, `TWITCH_ADMIN_REDIRECT_URI` doit correspondre exactement à l’URL
 
 Une PR vers `main` lance seulement une construction de vérification. Le déploiement se déclenche après un push sur `main` ; modifier une variable ou un secret GitHub ne déclenche pas de workflow. Après une modification de configuration, lancer le workflow en poussant un changement autorisé sur `main`.
 
-Le job de déploiement valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et les fichiers nécessaires. Sur le Geekom, il démarre PostgreSQL, crée ou met à jour les rôles et bases, vérifie le garde-fou de migration, tire l’image du commit, applique la migration et démarre l’application. Il contrôle ensuite `/health` depuis le conteneur.
+Le job de déploiement valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et les fichiers nécessaires. La sonde `tailscale ssh` récupère la clé d’hôte annoncée par Tailscale ; SSH et SCP la vérifient strictement, sans désactiver le contrôle de clé. Sur le Geekom, le workflow démarre PostgreSQL, crée ou met à jour les rôles et bases, vérifie le garde-fou de migration, tire l’image du commit, applique la migration et démarre l’application. Il contrôle ensuite `/health` depuis le conteneur.
 
 La configuration Twitch et le préfixe de commande persistés dans `settings.json` sont réécrits depuis les variables GitHub à chaque déploiement. Les valeurs modifiées depuis l’interface admin peuvent donc être remplacées. L’application est arrêtée pendant la migration : prévoir une brève interruption.
 
