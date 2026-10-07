@@ -241,25 +241,56 @@ jobs:
           set -euo pipefail
           target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
           remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          umask 077
+          tailscale_config_dir="$RUNNER_TEMP/overlays-tailscale-ssh"
+          install -d -m 700 "$tailscale_config_dir/tailscale"
+          ssh_known_hosts="$tailscale_config_dir/tailscale/ssh_known_hosts"
+          ssh_diagnostic="$(mktemp "${RUNNER_TEMP:-/tmp}/geekom-ssh.XXXXXX")"
+          trap 'rm -f -- "$ssh_diagnostic"' EXIT
           connected=false
+          ssh_status=0
           for attempt in $(seq 1 12); do
-            if ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" true >/dev/null 2>&1; then
+            if sudo env XDG_CONFIG_HOME="$tailscale_config_dir" \
+              tailscale ssh "$target" true >/dev/null 2>"$ssh_diagnostic"; then
               connected=true
               break
+            else
+              ssh_status=$?
             fi
             sleep 5
           done
           if [[ "$connected" != true ]]; then
-            echo "::error::Tailscale SSH to the Geekom did not become available"
+            echo "::error::Tailscale SSH to the Geekom did not become available (ssh exit code $ssh_status)"
+            if [[ -s "$ssh_diagnostic" ]]; then
+              echo "::group::Last SSH probe diagnostic"
+              stop_commands_token="ssh-diagnostic-$(python -c 'import secrets; print(secrets.token_hex(16))')"
+              echo "::stop-commands::$stop_commands_token"
+              cat "$ssh_diagnostic"
+              echo "::$stop_commands_token::"
+              echo "::endgroup::"
+            else
+              echo "The SSH probe returned no diagnostic output."
+            fi
             exit 1
           fi
-          ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" \
+          if [[ ! -s "$ssh_known_hosts" ]]; then
+            echo "::error::Tailscale did not provide a trusted SSH host key for the Geekom"
+            exit 1
+          fi
+          sudo chmod 644 "$ssh_known_hosts"
+          printf 'TAILSCALE_SSH_KNOWN_HOSTS=%s\n' "$ssh_known_hosts" >> "$GITHUB_ENV"
+          ssh_options=(
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_known_hosts"
+          )
+          ssh "${ssh_options[@]}" -o ConnectTimeout=20 "$target" \
             "mkdir -p '$GEEKOM_APP_DIR' '$remote_stage' && chmod 750 '$GEEKOM_APP_DIR' && chmod 700 '$remote_stage'"
-          scp -B -o BatchMode=yes -o ConnectTimeout=20 compose.yaml \
+          scp -B "${ssh_options[@]}" -o ConnectTimeout=20 compose.yaml \
             "$target:$remote_stage/compose.yaml"
-          scp -B -o BatchMode=yes -o ConnectTimeout=20 "$APP_ENV_FILE" \
+          scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$APP_ENV_FILE" \
             "$target:$remote_stage/.env"
-          scp -B -o BatchMode=yes -o ConnectTimeout=20 "$DOCKER_CONFIG_DIR/config.json" \
+          scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$DOCKER_CONFIG_DIR/config.json" \
             "$target:$remote_stage/docker-config.json"
 
       - name: Bootstrap database, migrate, and deploy
@@ -268,7 +299,12 @@ jobs:
           set -euo pipefail
           target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
           remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" \
+          ssh_options=(
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$TAILSCALE_SSH_KNOWN_HOSTS"
+          )
+          ssh "${ssh_options[@]}" -o ConnectTimeout=20 "$target" \
             "bash -s -- '$GEEKOM_APP_DIR' '$remote_stage'" <<'REMOTE'
           set -euo pipefail
           app_dir=$1
@@ -392,12 +428,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${GEEKOM_APP_DIR:-}" || -z "${GEEKOM_DEPLOY_USER:-}" || -z "${GEEKOM_TAILSCALE_HOST:-}" ]]; then
+          if [[ -z "${GEEKOM_APP_DIR:-}" || -z "${GEEKOM_DEPLOY_USER:-}" \
+            || -z "${GEEKOM_TAILSCALE_HOST:-}" || -z "${TAILSCALE_SSH_KNOWN_HOSTS:-}" \
+            || ! -s "$TAILSCALE_SSH_KNOWN_HOSTS" ]]; then
+            echo "Skipping remote cleanup because a trusted Tailscale SSH host key was not established."
             exit 0
           fi
           target="$GEEKOM_DEPLOY_USER@$GEEKOM_TAILSCALE_HOST"
           remote_stage="$GEEKOM_APP_DIR/.deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" \
+          ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$TAILSCALE_SSH_KNOWN_HOSTS" "$target" \
             "rm -rf -- '$remote_stage'"
 
       - name: Remove temporary runner credentials
