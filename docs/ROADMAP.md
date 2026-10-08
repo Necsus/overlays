@@ -4,9 +4,20 @@ Ce fichier est l’index du travail restant. L’existant est décrit dans
 [l’architecture](ARCHITECTURE.md) ; l’installation et l’usage dans le
 [README](../README.md).
 
-La première release est **opérationnelle**, confirmée par l'utilisateur :
-`overlays.service`, [DEPLOY.md](DEPLOY.md). Les mises à jour suivent
-`scripts/update-release.sh`. Aucune étape n'est ouverte pour le moment.
+## Chantier actif — accès Internet / CI-CD
+
+La configuration Nginx/Certbot est préparée, **non déployée et non validée**.
+La procédure et les critères de validation restent dans
+[DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
+
+- Corriger la détection du certificat sous `deploy` sans élargir l’accès aux
+  clés privées ; voir les [limites CI](DEPLOY.md#limites-de-lautomatisation).
+- Déployer les fichiers préparés et terminer la mise en service HTTPS.
+- Valider l’accès extérieur, OAuth Twitch, OBS et le renouvellement/rechargement.
+- Élucider l’absence du conteneur applicatif observée après un workflow réussi.
+
+L’accès PostgreSQL depuis le poste de développement est un sujet réseau
+séparé ; voir les [limites réseau](DEPLOY.md#4-données-réseau-et-limites).
 
 ## Priorités et dossiers ADR
 

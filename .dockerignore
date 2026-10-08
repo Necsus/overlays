@@ -19,6 +19,11 @@ __pycache__/
 # Local application data (settings, tokens, and other persisted state)
 data/
 
+# Geekom ingress and Certbot host configuration are deployed separately.
+nginx/
+ops/
+acme-webroot/
+
 # Editor and operating-system files
 .idea/
 .vscode/

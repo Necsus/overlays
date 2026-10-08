@@ -31,6 +31,39 @@ Le service est la source de vérité. Chaque streamer possède un moteur, un
 service, un verrou asynchrone et un minuteur ; OBS affiche les données mais ne
 choisit jamais les gagnants.
 
+## Déploiement et entrée web
+
+La configuration du dépôt cible Debian et Docker Compose. GitHub Actions
+construit l’image sur les PR, puis publie et déploie les commits de `main`
+via GHCR et Tailscale SSH. Le workflow applique les migrations avant de
+démarrer l’application ; son contrôle `/health` est interne au conteneur.
+
+L’entrée web Nginx/Certbot est implémentée dans les fichiers de configuration,
+mais n’est pas encore déployée ni validée sur le Geekom :
+
+```text
+Internet → IPv4 publique fixe / routeur TCP 80 et 443
+         → Nginx sur 192.168.1.112 → app:8000 → db:5432
+```
+
+- `nginx-bootstrap` (profil `bootstrap`) sert uniquement le challenge ACME
+  HTTP-01 ; les autres chemins répondent 404.
+- `nginx` (profil `https`) termine TLS, redirige HTTP vers HTTPS hors challenge
+  ACME et relaie HTTP/WebSocket vers `app` sur le réseau `app_egress`.
+  La résolution DNS Docker est renouvelée pour suivre les recréations de l’app.
+- L’application ne publie aucun port hôte. PostgreSQL reste sur le réseau
+  `backend` interne ; les ports LAN/Tailscale déclarés ne sont pas effectifs
+  dans l’état observé sur le Geekom.
+- Certbot est prévu sur l’hôte Debian. Nginx monte `/etc/letsencrypt` en lecture
+  seule et le webroot ACME est partagé via `acme-webroot`. Un drop-in systemd
+  préparé dans `ops/` recharge Nginx après un renouvellement réussi.
+
+Les deux profils Nginx ne doivent pas tourner simultanément : ils partagent
+le port 80. Le workflow transfère leurs configurations et tente de démarrer
+HTTPS si le certificat est détecté ; la vérification faite sous `deploy` peut
+être bloquée par les permissions root de Certbot. Procédure, limites et
+validations attendues : [DEPLOY.md](DEPLOY.md).
+
 ## Giveaway et échéance
 
 ```text
@@ -95,7 +128,7 @@ et appliquées explicitement sous verrou PostgreSQL. La version 2 supprime les
 giveaways existants (données de test), ajoute leur propriétaire et autorise
 plusieurs streamers actifs. Une nouvelle exécution ne rejoue pas les versions
 enregistrées ; l'application contrôle la version au démarrage. Les commandes sont dans le
-[README](../README.md#installation-et-lancement).
+[README](../README.md#développement-local).
 
 Un verrou applicatif commun sérialise les changements d'identité et de clés avec
 l'authentification/enregistrement des WebSockets, pour ne pas laisser un accès

@@ -66,6 +66,39 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # During ACME bootstrap, this HTTP-only service serves the challenge on port 80.
+  nginx-bootstrap:
+    image: nginx:1.30.5-alpine3.24
+    container_name: overlays-nginx-bootstrap
+    profiles: [bootstrap]
+    restart: unless-stopped
+    ports:
+      - "192.168.1.112:80:80"
+    volumes:
+      - ./nginx/bootstrap:/etc/nginx/conf.d:ro
+      - ./acme-webroot:/var/www/certbot:ro
+    networks:
+      - app_egress
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    image: nginx:1.30.5-alpine3.24
+    container_name: overlays-nginx
+    profiles: [https]
+    restart: unless-stopped
+    ports:
+      - "192.168.1.112:80:80"
+      - "192.168.1.112:443:443"
+    volumes:
+      - ./nginx/https:/etc/nginx/conf.d:ro
+      - ./acme-webroot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - app_egress
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   postgres_data:
   overlays_runtime:

@@ -273,6 +273,8 @@ jobs:
             "mkdir -p '$GEEKOM_APP_DIR' '$remote_stage' && chmod 750 '$GEEKOM_APP_DIR' && chmod 700 '$remote_stage'"
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 compose.yaml \
             "$target:$remote_stage/compose.yaml"
+          scp -r -B "${ssh_options[@]}" -o ConnectTimeout=20 nginx ops \
+            "$target:$remote_stage/"
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$APP_ENV_FILE" \
             "$target:$remote_stage/.env"
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$DOCKER_CONFIG_DIR/config.json" \
@@ -300,6 +302,14 @@ jobs:
           install -m 0600 "$stage/.env" "$stage/.env.ready"
           mv -f "$stage/compose.yaml.ready" "$app_dir/compose.yaml"
           mv -f "$stage/.env.ready" "$app_dir/.env"
+          install -d -m 0755 "$app_dir/nginx/bootstrap" "$app_dir/nginx/https" \
+            "$app_dir/acme-webroot" "$app_dir/ops/systemd/certbot.service.d"
+          install -m 0644 "$stage/nginx/bootstrap/default.conf" \
+            "$app_dir/nginx/bootstrap/default.conf"
+          install -m 0644 "$stage/nginx/https/default.conf" \
+            "$app_dir/nginx/https/default.conf"
+          install -m 0644 "$stage/ops/systemd/certbot.service.d/overlays.conf" \
+            "$app_dir/ops/systemd/certbot.service.d/overlays.conf"
           install -d -m 700 "$stage/docker"
           install -m 0600 "$stage/docker-config.json" "$stage/docker/config.json"
 
@@ -360,6 +370,7 @@ jobs:
           PREFLIGHT
 
           docker compose pull app
+          docker pull nginx:1.30.5-alpine3.24
           docker compose stop app >/dev/null 2>&1 || true
           docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'CREDENTIALS'
           \set ON_ERROR_STOP on
@@ -396,15 +407,29 @@ jobs:
           '
           docker compose up -d app
 
+          app_healthy=false
           for attempt in $(seq 1 30); do
             if docker compose exec -T app python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)' >/dev/null 2>&1; then
               echo "Application health check passed."
-              exit 0
+              app_healthy=true
+              break
             fi
             sleep 2
           done
-          echo "::error::Application did not pass its internal health check; no container logs or secrets were printed."
-          exit 1
+          if [[ "$app_healthy" != true ]]; then
+            echo "::error::Application did not pass its internal health check; no container logs or secrets were printed."
+            exit 1
+          fi
+
+          certificate_dir=/etc/letsencrypt/live/overlays.necsus.dev
+          if [[ -s "$certificate_dir/fullchain.pem" && -s "$certificate_dir/privkey.pem" ]]; then
+            docker compose --profile https up -d nginx
+            docker compose --profile https exec -T nginx nginx -t
+            docker compose --profile https exec -T nginx nginx -s reload
+            echo "HTTPS reverse proxy is active."
+          else
+            echo "HTTPS reverse proxy not started: the Let's Encrypt certificate is not provisioned yet."
+          fi
           REMOTE
 
       - name: Remove temporary remote deployment files
