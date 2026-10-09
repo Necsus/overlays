@@ -11,8 +11,9 @@ Le raccordement applicatif au Nginx hôte est préparé, **non déployé et non 
 La procédure et les critères restent dans
 [DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
 
-- Élucider l’absence du conteneur applicatif, confirmée après la migration Docker
-  CE, malgré un ancien workflow réussi.
+- Déployer le correctif stdin préparé et vérifier la présence durable du service
+  applicatif ainsi que l’exécution des deux contrôles de santé. Le mode interactif
+  de Compose absorbait la suite du script SSH malgré un job vert.
 - Déployer l’adaptation Compose/CI autorisée, valider la publication loopback et
   la confiance proxy, puis installer le vhost du Nginx hôte.
 - Contrôler l’isolation LAN du port loopback après déploiement ; le moteur a été

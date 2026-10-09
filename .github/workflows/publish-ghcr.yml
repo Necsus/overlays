@@ -377,7 +377,8 @@ jobs:
 
           docker compose pull app
           # Create app_egress without starting the web server or bot; check before downtime.
-          docker compose run --rm --no-deps app python -c 'pass'
+          # bash -s owns STDIN: app commands must not consume the remaining deployment script.
+          docker compose run --interactive=false --rm --no-deps app python -c 'pass'
           project_name=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$(docker compose ps -q db)")
           proxy_gateways=$(docker network inspect "${project_name}_app_egress" --format '{{range .IPAM.Config}}{{println .Gateway}}{{end}}')
           if ! grep -Fxq -- "$proxy_ip" <<<"$proxy_gateways"; then
@@ -407,8 +408,8 @@ jobs:
           SELECT format('ALTER DATABASE %I OWNER TO %I', :'dev_db', :'dev_user')
           \gexec
           CREDENTIALS
-          docker compose run --rm --no-deps app python -m app.infrastructure.database
-          docker compose run --rm --no-deps app python -c '
+          docker compose run --interactive=false --rm --no-deps app python -m app.infrastructure.database
+          docker compose run --interactive=false --rm --no-deps app python -c '
           from app.core.configuration import configuration_from_settings
           from app.core.environment import Settings
           from app.infrastructure.configuration_store import ConfigurationStore
@@ -422,7 +423,7 @@ jobs:
 
           app_healthy=false
           for attempt in $(seq 1 30); do
-            if docker compose exec -T app python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)' >/dev/null 2>&1; then
+            if docker compose exec --interactive=false -T app python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)' >/dev/null 2>&1; then
               echo "Application health check passed."
               app_healthy=true
               break
