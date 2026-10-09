@@ -4,25 +4,15 @@ Le déploiement de production utilise Debian, Docker Compose et GitHub Actions. 
 
 ## État et points à confirmer
 
-- **Observé** : le dernier workflow consulté (`05d273d`) a réussi son contrôle
-  interne. Lors du diagnostic sur le Geekom, seul PostgreSQL tournait ; aucun
-  conteneur `app` n’existait et aucun proxy web n’était actif. Le site n’a jamais
-  été accessible depuis le passage à Compose, selon l’utilisateur. La cause de
-  la disparition de `app` reste inconnue.
-- **Préparé dans le dépôt** : profils Nginx de bootstrap HTTP et de service HTTPS,
-  transfert de leurs fichiers par CI et hook systemd de renouvellement Certbot.
-  Aucun déploiement de ces changements ni changement DNS/routeur n’a été réalisé.
-- **Contrôlé localement** : validation Compose avec les valeurs fictives de
-  `.env.example`, syntaxe YAML et shell du workflow, et `git diff --check`.
-- **Non validé** : exécution Nginx (daemon Docker local indisponible), émission
-  et renouvellement ACME, HTTPS externe, OAuth Twitch et WebSocket OBS sur cette
-  nouvelle entrée web.
+- **Observé** : le dernier workflow consulté (`05d273d`) a réussi son contrôle interne, mais le dernier diagnostic Docker ne montrait que PostgreSQL, sans conteneur `app`. Sa disparition reste inexpliquée ; cet état doit être revérifié.
+- **Socle commun en place** : Nginx et Certbot sur l’hôte, webroot HTTP-01 commun, certificat Overlays émis, timer planifié et dry-run réussi avec le hook de rechargement du Nginx hôte. La source de cet état et du runbook commun est le dépôt d’infrastructure `geekom` (`docs/architecture.md` et `docs/runbooks/nginx-tls.md`). Ne pas réinstaller ce socle par application.
+- **Préparé dans ce dépôt, non déployé** : publication de `app` sur `127.0.0.1:8000`, confiance proxy limitée à la passerelle Docker vérifiée, vhost HTTPS pour le Nginx hôte et adaptation CI sans proxy Docker/Certbot.
+- **Contrôlé localement** : YAML, syntaxe shell/Python du workflow, rendu Compose avec données fictives et sans lecture du `.env` réel, conservation de PostgreSQL/volumes/réseaux et des blocs SQL/migration. Vingt contrôles ponctuels isolés couvrent la validation IPv4, la garde de passerelle et la sonde HTTP ; ils ne valident pas un conteneur ou un réseau réel. Le LSP YAML est indisponible.
+- **Non validé** : exécution de cette nouvelle CI, publication réelle du port applicatif, confiance proxy effective, chargement de ce vhost sur le Geekom, HTTPS externe, OAuth Twitch et WebSocket OBS. Le daemon Docker local et un Nginx local sont indisponibles ; les contrôles statiques ou simulés ne remplacent pas ces validations.
 
-La mise en service nécessite la procédure ci-dessous et le traitement des
-[limites de l’automatisation](#limites-de-lautomatisation). Un workflow vert
-ne suffit pas à déclarer le site opérationnel.
+La mise en service nécessite la procédure ci-dessous et le traitement des [limites de l’automatisation](#limites-de-lautomatisation). Un workflow vert ne suffit pas à déclarer le site opérationnel.
 
-Le workflow est [`../.github/workflows/publish-ghcr.yml`](../.github/workflows/publish-ghcr.yml). Il suppose que le Geekom est déjà préparé : Debian, Docker avec le plugin Compose, Tailscale actif, Tailscale SSH configuré et compte `deploy` autorisé à utiliser Docker. Le compte doit pouvoir écrire dans `/home/deploy/apps/overlays` (ou le chemin configuré). Ne pas modifier SSH, Tailscale ou le pare-feu dans le cadre de ce guide.
+Le workflow est [`../.github/workflows/publish-ghcr.yml`](../.github/workflows/publish-ghcr.yml). Il suppose que le Geekom est déjà préparé : Debian, Docker Engine 28 ou supérieur avec le plugin Compose, Nginx/Certbot communs, Python 3 sur l’hôte (fourni par Certbot Debian), Tailscale actif, Tailscale SSH configuré et compte `deploy` autorisé à utiliser Docker. Le compte doit pouvoir écrire dans `/home/deploy/apps/overlays` (ou le chemin configuré). Ne pas modifier SSH, Tailscale ou le pare-feu dans le cadre de ce guide.
 
 ## 1. Configurer GitHub Actions
 
@@ -32,7 +22,8 @@ Dans **Settings → Secrets and variables → Actions**, ajouter les éléments 
 
 - `GEEKOM_APP_DIR` : chemin sous `/home/deploy/apps`, par exemple `/home/deploy/apps/overlays`.
 - `GEEKOM_DEPLOY_USER` : `deploy`.
-- `GEEKOM_TAILSCALE_HOST` : adresse IPv4 Tailscale du Geekom. La publication PostgreSQL indiquée par Compose n’est actuellement pas effective sur son réseau `internal: true` ; voir les limites réseau ci-dessous.
+- `GEEKOM_TAILSCALE_HOST` : adresse IPv4 Tailscale du Geekom. La publication PostgreSQL indiquée par Compose n’était pas effective avant la migration Docker CE et reste à revérifier sur son réseau `internal: true` ; voir les limites réseau ci-dessous.
+- `OVERLAYS_PROXY_IP` : facultative, IPv4 de la passerelle Docker `app_egress` par laquelle Nginx atteint Uvicorn. Valeur par défaut vérifiée sur le Geekom : `172.18.0.1`. La CI refuse un wildcard, un CIDR ou une adresse différente des passerelles de ce réseau. Si le réseau est recréé avec une autre passerelle, actualiser cette variable avant le prochain déploiement ; ne pas élargir la confiance à `*`.
 - `POSTGRES_ADMIN_USER` : rôle d’administration PostgreSQL, par exemple `overlays_admin`.
 - `PSQL_DB`, `PSQL_USER` : base et rôle de release, par exemple `overlays` et `overlays_release`.
 - `PSQL_DEV_DB`, `PSQL_DEV_USER` : base et rôle pour le poste de développement, par exemple `overlays_dev` pour les deux.
@@ -55,7 +46,9 @@ Pour Twitch, `TWITCH_ADMIN_REDIRECT_URI` doit correspondre exactement à l’URL
 
 Une PR vers `main` lance seulement une construction de vérification. Le déploiement se déclenche après un push sur `main` ; modifier une variable ou un secret GitHub ne déclenche pas de workflow. Après une modification de configuration, lancer le workflow en poussant un changement autorisé sur `main`.
 
-Le job de déploiement valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et les configurations Nginx/Certbot. La sonde `tailscale ssh` récupère la clé d’hôte annoncée par Tailscale ; SSH et SCP la vérifient strictement, sans désactiver le contrôle de clé. Sur le Geekom, le workflow démarre PostgreSQL, crée ou met à jour les rôles et bases, vérifie le garde-fou de migration, tire l’image du commit, applique la migration et démarre l’application. Il contrôle ensuite `/health` depuis le conteneur. Si le compte `deploy` peut détecter les deux fichiers du certificat, il démarre Nginx, vérifie sa configuration et la recharge. Sinon il saute cette étape sans faire échouer le job ; voir les limites de l’automatisation ci-dessous.
+Le job valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et le vhost applicatif Nginx. La sonde `tailscale ssh` récupère la clé d’hôte annoncée par Tailscale ; SSH et SCP la vérifient strictement, sans désactiver le contrôle de clé. Sur le Geekom, le workflow démarre PostgreSQL, prépare les rôles et bases, vérifie le garde-fou de migration et tire l’image du commit. Une commande Python sans serveur ni bot initialise le réseau applicatif si nécessaire ; la CI vérifie sa passerelle avant d’arrêter l’application. Elle conserve ensuite la séquence existante de mise à jour des rôles, migration et configuration, puis démarre `app`. Elle contrôle `/health` dans le conteneur et depuis l’hôte sur `127.0.0.1:8000`, avec HTTP 200 et `{"status":"ok"}` attendus pour la sonde hôte.
+
+Le workflow ne lit plus les certificats et ne démarre ni ne recharge Nginx. Il dépose le vhost dans `$GEEKOM_APP_DIR/nginx/https/default.conf` ; son installation dans `/etc/nginx` reste manuelle. Les changements ultérieurs de ce fichier ne sont donc pas appliqués au proxy par un simple déploiement applicatif.
 
 La configuration Twitch et le préfixe de commande persistés dans `settings.json` sont réécrits depuis les variables GitHub à chaque déploiement. Les valeurs modifiées depuis l’interface admin peuvent donc être remplacées. L’application est arrêtée pendant la migration : prévoir une brève interruption.
 
@@ -63,108 +56,63 @@ Consulter l’onglet **Actions** pour le résultat. Le workflow évite d’impri
 
 ## 3. Accès HTTPS depuis Internet
 
-### Prérequis publics
+### Contrat applicatif et prérequis
 
-Le proxy Nginx est configuré pour écouter sur l’adresse LAN du Geekom
-(`192.168.1.112`) ; l’application n’expose aucun port hôte. L’utilisateur dispose
-d’une IPv4 publique fixe et de l’accès au routeur. Avant la première émission :
+Le fichier [`nginx/https/default.conf`](../nginx/https/default.conf) est maintenant un **vhost du Nginx hôte**, pas une configuration de conteneur. Il porte les domaines, les chemins de certificat et l’upstream de cette application :
 
-- faire pointer l’enregistrement A de `overlays.necsus.dev` vers cette IPv4
-  publique, jamais vers `192.168.1.112` ; vérifier aussi qu’un éventuel AAAA
-  n’envoie pas les clients vers une autre destination ;
-- rediriger uniquement TCP 80 et 443 du routeur vers `192.168.1.112` ;
-  ne pas exposer PostgreSQL ni modifier SSH/Tailscale ;
-- permettre au challenge HTTP-01 de Let’s Encrypt d’atteindre le Geekom sur 80,
-  y compris lors des renouvellements.
+- domaine et certificat : `overlays.necsus.dev` ;
+- upstream : `127.0.0.1:8000`, publié par Compose ; réserver ce port à Overlays ;
+- challenge : inclusion de `/etc/nginx/snippets/acme-challenge.conf`, avec webroot commun `/var/www/acme` ;
+- certificats privés : uniquement sur l’hôte, jamais montés dans les conteneurs applicatifs ;
+- variables WebSocket et zone de cache TLS propres à Overlays, pour cohabiter avec les autres vhosts.
 
-Ces actions exposent l’interface web à Internet : les réaliser manuellement
-avec confirmation de leur périmètre. Pour la première validation, utiliser
-Cloudflare en mode **DNS-only**, sans Tunnel. Si son proxy HTTP est activé
-ensuite, utiliser **Full (strict)** avec le certificat d’origine valide.
+Le DNS A et la redirection Freebox ont permis l’émission du certificat via HTTP-01. Ne pas rejouer l’installation ou l’émission initiale. Maintenir l’accès public TCP 80 pour le renouvellement ; vérifier séparément TCP 443 pour HTTPS. Ne pas ouvrir le port 8000, PostgreSQL, SSH ou Tailscale sur Internet. Pour la première validation, utiliser Cloudflare en mode **DNS-only**, sans Tunnel. Si son proxy HTTP est activé ensuite, utiliser **Full (strict)** avec le certificat d’origine valide.
 
-### Première mise en service
+### Première mise en service du vhost
 
-Les commandes suivantes sont **prévues, non exécutées**. Elles supposent qu’un
-déploiement autorisé a transféré les nouveaux fichiers et démarré `app`. Ne pas
-lancer de workflow en parallèle pendant la bascule entre les profils Nginx.
+Cette procédure est **préparée, non exécutée**. Ne pas lancer de workflow en parallèle pendant la mise en service.
 
-Sur le Geekom, définir le chemin réel et ce raccourci pour le terminal courant
-(les exemples utilisent le chemin par défaut) :
-
-```bash
-APP_DIR=/home/deploy/apps/overlays
-compose() {
-  sudo -u deploy docker compose --project-directory "$APP_DIR" \
-    -f "$APP_DIR/compose.yaml" "$@"
-}
-compose ps --all
-```
-
-L’application doit être en cours d’exécution. Si elle est absente, reprendre le
-diagnostic/déploiement avant de considérer HTTPS disponible. Ne pas afficher
-le rendu complet de `docker compose config`, qui contient des secrets.
-
-1. Installer Certbot sur l’hôte Debian :
+1. Après un déploiement explicitement autorisé, confirmer que `app` existe et tourne, sans afficher de secrets :
 
    ```bash
-   sudo apt update
-   sudo apt install certbot
+   sudo -u deploy docker compose --project-directory /home/deploy/apps/overlays \
+     -f /home/deploy/apps/overlays/compose.yaml ps --all
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
    ```
 
-2. Démarrer le bootstrap HTTP, qui ne sert que le challenge ACME :
+   Attendre HTTP 200 et `{"status":"ok"}`. Si le port est déjà occupé par un autre service, ne pas l’arrêter à l’aveugle. Pour un chemin applicatif différent, adapter les commandes. Ne pas afficher le rendu complet de `docker compose config`, qui contient des secrets.
+
+2. Installer le vhost livré par ce déploiement dans le répertoire du Nginx hôte. **Pour cette première installation, s’arrêter si le fichier ou le lien `overlays` existe déjà**, et examiner la configuration existante avant de la remplacer :
 
    ```bash
-   compose --profile bootstrap up -d nginx-bootstrap
-   compose --profile bootstrap exec -T nginx-bootstrap nginx -t
+   sudo install -o root -g root -m 0644 \
+     /home/deploy/apps/overlays/nginx/https/default.conf \
+     /etc/nginx/sites-available/overlays
+   sudo ln -s /etc/nginx/sites-available/overlays /etc/nginx/sites-enabled/overlays
+   sudo /usr/sbin/nginx -t
    ```
 
-3. Émettre le premier certificat. Remplacer l’e-mail fictif ; cette commande
-   accepte les conditions de Let’s Encrypt :
+   Conserver `acme-bootstrap` activé : il reste le serveur HTTP par défaut pour les autres applications, tandis que le vhost Overlays inclut lui-même le snippet ACME. Aucun conteneur Nginx ne doit reprendre les ports 80/443. Si un ancien proxy Docker est présent, diagnostiquer et organiser sa bascule explicitement ; la CI ne supprime pas les conteneurs orphelins.
+
+3. **Seulement si `nginx -t` réussit**, recharger :
 
    ```bash
-   sudo certbot certonly --webroot \
-     --webroot-path "$APP_DIR/acme-webroot" \
-     --cert-name overlays.necsus.dev -d overlays.necsus.dev \
-     --email adresse@example.net --agree-tos --non-interactive
+   sudo systemctl reload nginx
    ```
 
-   Les certificats et clés restent dans `/etc/letsencrypt` sur l’hôte : ne pas
-   les copier dans le dépôt, GitHub, les journaux ou les réponses.
-
-4. Une fois l’émission réussie, arrêter le bootstrap puis démarrer HTTPS :
-
-   ```bash
-   compose --profile bootstrap stop nginx-bootstrap
-   compose --profile https up -d nginx
-   compose --profile https exec -T nginx nginx -t
-   ```
-
-   Les deux profils ne doivent pas tourner simultanément : ils utilisent le
-   même port 80. Nginx sert encore le challenge ACME en HTTP pour les futurs
-   renouvellements ; les autres chemins HTTP redirigent vers HTTPS.
+   En cas de test invalide, ne pas recharger : corriger la configuration ou retirer seulement le lien ajouté lors de cette première installation, puis refaire le test. Le Nginx déjà en cours continue avec sa configuration précédente. Ne pas modifier les permissions des clés pour contourner une erreur.
 
 ### Renouvellement et rechargement
 
-Le drop-in livré remplace la commande `ExecStart` du service Certbot Debian et
-ajoute un hook de rechargement du conteneur `overlays-nginx`. Vérifier sa
-compatibilité avec le service Certbot installé et avec tout autre certificat
-éventuellement géré par cet hôte avant de l’installer :
+Le timer et le hook commun `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx` sont gérés par `geekom`. L’ancien drop-in Overlays et son rechargement de conteneur sont abandonnés. Ne pas surcharger le service Certbot par application.
+
+Une fois le vhost HTTPS installé, refaire le dry-run pour cette configuration :
 
 ```bash
-sudo install -D -m 0644 \
-  "$APP_DIR/ops/systemd/certbot.service.d/overlays.conf" \
-  /etc/systemd/system/certbot.service.d/overlays.conf
-sudo systemctl daemon-reload
-sudo systemctl enable --now certbot.timer
-sudo certbot renew --cert-name overlays.necsus.dev --dry-run \
-  --run-deploy-hooks --deploy-hook '/usr/bin/docker exec overlays-nginx nginx -s reload'
+sudo certbot renew --cert-name overlays.necsus.dev --dry-run --run-deploy-hooks
 ```
 
-Le dry-run vérifie le renouvellement de test et le hook sans remplacer le
-certificat de production. Le timer utilise le drop-in ; une commande manuelle
-`certbot renew` sans `--deploy-hook` ne bénéficie pas automatiquement de cet
-argument systemd. Les mises à jour du drop-in livrées par CI doivent être
-réinstallées manuellement sur l’hôte, puis suivies de `daemon-reload`.
+Puis contrôler le certificat réellement servi en HTTPS. Le dry-run précédent a validé le hook sur le socle HTTP, pas encore le chargement du certificat par ce vhost TLS.
 
 ### Validation réelle attendue
 
@@ -174,33 +122,20 @@ Depuis un réseau extérieur au LAN (par exemple une connexion mobile), vérifie
 curl --fail --silent --show-error https://overlays.necsus.dev/health
 ```
 
-Attendre HTTP 200 et `{"status":"ok"}`, avec un certificat reconnu sans option
-`-k`. Vérifier ensuite `/admin`, le callback OAuth Twitch et un overlay OBS
-avec son WebSocket authentifié, sans partager de tokens ni de clés OBS.
-La release doit utiliser `SESSION_COOKIE_SECURE=true`. Le site n’est déclaré
-opérationnel qu’après ces validations et le test de renouvellement/rechargement.
+Attendre HTTP 200 et `{"status":"ok"}`, avec un certificat reconnu sans option `-k`. Vérifier ensuite `/admin`, le callback OAuth Twitch et un overlay OBS avec son WebSocket authentifié, sans partager de tokens ni de clés OBS. Les liens OBS générés doivent commencer par `https://` ; sinon vérifier l’adresse source du proxy et `OVERLAYS_PROXY_IP`, plutôt que faire confiance à toutes les adresses. La release doit utiliser `SESSION_COOKIE_SECURE=true`.
 
-Un échec uniquement depuis le LAN peut venir du NAT loopback du routeur :
-distinguer ce cas d’un échec depuis Internet avant de modifier le DNS local.
+Le site n’est déclaré opérationnel qu’après ces validations et le test de renouvellement/rechargement avec le vhost TLS. Un échec uniquement depuis le LAN peut venir du NAT loopback du routeur : distinguer ce cas d’un échec depuis Internet avant de modifier le DNS local.
 
 ### Limites de l’automatisation
 
-- Le workflow teste les fichiers Certbot avec `test -s` en tant que `deploy`.
-  Si les répertoires `live`/`archive` sont réservés à root, ce test échoue même
-  avec un certificat installé et Nginx n’est pas démarré par le job. La détection
-  reste à corriger sans rendre la clé privée lisible par `deploy`.
-- L’étape sautée sans certificat détecté laisse le workflow réussir. Le message
-  ne distingue pas un certificat absent d’un accès refusé.
-- `nginx -t` et le rechargement ne sont ni une sonde HTTP du proxy ni un test de
-  disponibilité Internet. La validation externe reste manuelle.
-- L’installation Certbot, le timer, DNS et routeur ne sont pas automatisés par
-  GitHub Actions. Aucune de ces actions n’est réalisée en mettant à jour la doc.
+- Les sondes internes et loopback contrôlent l’application, pas le vhost, le certificat ni la disponibilité Internet. Un workflow vert ne prouve pas que HTTPS fonctionne.
+- Le vhost est livré mais doit être copié, testé et rechargé manuellement sur l’hôte, y compris après un changement de sa configuration.
+- DNS, routeur, première émission et configuration du Nginx partagé ne sont pas automatisés par ce workflow. Les workflows réutilisables `geekom` restent à définir.
+- Les versions Docker antérieures à 28 ont une [limite connue pour les ports publiés sur localhost](https://docs.docker.com/engine/network/port-publishing/), potentiellement joignables depuis le même réseau L2. Le Geekom a été migré vers Docker CE ; versions et contrôles sont suivis dans `geekom`. Cela ne remplace pas le contrôle de la publication applicative et de son isolation LAN après déploiement. Ne pas modifier le pare-feu à l’aveugle.
 
 ## 4. Données, réseau et limites
 
-Les données PostgreSQL et la configuration d’exécution de l’application sont stockées dans des volumes Docker persistants. Le workflow ne fait pas `docker compose down -v` et ne supprime pas ces volumes. PostgreSQL est attaché uniquement au réseau Docker `backend` configuré `internal: true`. Bien que Compose déclare des ports LAN/Tailscale, Docker ne les publie pas pour un conteneur relié uniquement à ce réseau interne ; l’application, elle, communique avec PostgreSQL sur ce réseau. Rendre PostgreSQL accessible depuis le poste de développement nécessitera une décision réseau séparée ; ne pas supprimer `internal: true` à l’aveugle.
-
-Le contrôle `/health` est interne au conteneur : il ne valide ni le DNS, ni le proxy HTTPS, ni OAuth Twitch/OBS. Après le déploiement, valider séparément l’accès HTTPS et, si nécessaire, le parcours Twitch/OBS.
+Les données PostgreSQL et la configuration d’exécution de l’application sont stockées dans des volumes Docker persistants. Le workflow ne fait pas `docker compose down -v` et ne supprime pas ces volumes. PostgreSQL est attaché uniquement au réseau Docker `backend` configuré `internal: true`. Bien que Compose déclare des ports LAN/Tailscale, ils n’étaient pas effectivement publiés lors du diagnostic sous l’ancien moteur Docker ; cet état reste à revérifier après sa mise à jour. L’application, elle, communique avec PostgreSQL sur ce réseau. Rendre PostgreSQL accessible depuis le poste de développement nécessitera une décision réseau séparée ; ne pas supprimer `internal: true` à l’aveugle.
 
 Les bases `overlays` (release) et `overlays_dev` (développement) sont distinctes, avec des rôles séparés. Le contrôle de migration refuse le passage du schéma v1 si des giveaways existants seraient supprimés. Toute base préexistante mérite une sauvegarde vérifiée avant une migration.
 

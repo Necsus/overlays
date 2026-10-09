@@ -6,15 +6,21 @@ Ce fichier est l’index du travail restant. L’existant est décrit dans
 
 ## Chantier actif — accès Internet / CI-CD
 
-La configuration Nginx/Certbot est préparée, **non déployée et non validée**.
-La procédure et les critères de validation restent dans
+Le socle commun Nginx/Certbot est en place ; son état est suivi dans `geekom`.
+Le raccordement applicatif au Nginx hôte est préparé, **non déployé et non validé**.
+La procédure et les critères restent dans
 [DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
 
-- Corriger la détection du certificat sous `deploy` sans élargir l’accès aux
-  clés privées ; voir les [limites CI](DEPLOY.md#limites-de-lautomatisation).
-- Déployer les fichiers préparés et terminer la mise en service HTTPS.
-- Valider l’accès extérieur, OAuth Twitch, OBS et le renouvellement/rechargement.
-- Élucider l’absence du conteneur applicatif observée après un workflow réussi.
+- Élucider l’absence du conteneur applicatif, confirmée après la migration Docker
+  CE, malgré un ancien workflow réussi.
+- Déployer l’adaptation Compose/CI autorisée, valider la publication loopback et
+  la confiance proxy, puis installer le vhost du Nginx hôte.
+- Contrôler l’isolation LAN du port loopback après déploiement ; le moteur a été
+  mis à jour, mais la publication réelle reste à valider. Voir les
+  [limites](DEPLOY.md#limites-de-lautomatisation).
+- Valider HTTPS extérieur, les liens HTTPS générés, OAuth Twitch et OBS.
+- Revalider le renouvellement/rechargement avec le vhost TLS en place.
+- Définir ensuite le contrat et les workflows réutilisables communs de `geekom`.
 
 L’accès PostgreSQL depuis le poste de développement est un sujet réseau
 séparé ; voir les [limites réseau](DEPLOY.md#4-données-réseau-et-limites).

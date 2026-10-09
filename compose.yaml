@@ -34,6 +34,9 @@ services:
     image: ghcr.io/necsus/overlays:${OVERLAYS_IMAGE_TAG:?Set OVERLAYS_IMAGE_TAG in .env}
     restart: unless-stopped
     environment:
+      # Host Nginx reaches this container through the app_egress gateway.
+      # Trust only that observed address, never all clients or Docker subnets.
+      FORWARDED_ALLOW_IPS: ${OVERLAYS_PROXY_IP:-172.18.0.1}
       TWITCH_ENABLED: ${TWITCH_ENABLED:-false}
       TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID:?Set TWITCH_CLIENT_ID in .env}
       TWITCH_CLIENT_SECRET: ${TWITCH_CLIENT_SECRET:?Set TWITCH_CLIENT_SECRET in .env}
@@ -52,6 +55,8 @@ services:
       PSQL_PASSWORD: ${PSQL_PASSWORD:?Set PSQL_PASSWORD in .env}
       PSQL_SSLMODE: disable
       GIVEAWAY_CONFIG_FILE: /var/lib/overlays/settings.json
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - overlays_runtime:/var/lib/overlays
     depends_on:
@@ -63,39 +68,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
-    security_opt:
-      - no-new-privileges:true
-
-  # During ACME bootstrap, this HTTP-only service serves the challenge on port 80.
-  nginx-bootstrap:
-    image: nginx:1.30.5-alpine3.24
-    container_name: overlays-nginx-bootstrap
-    profiles: [bootstrap]
-    restart: unless-stopped
-    ports:
-      - "192.168.1.112:80:80"
-    volumes:
-      - ./nginx/bootstrap:/etc/nginx/conf.d:ro
-      - ./acme-webroot:/var/www/certbot:ro
-    networks:
-      - app_egress
-    security_opt:
-      - no-new-privileges:true
-
-  nginx:
-    image: nginx:1.30.5-alpine3.24
-    container_name: overlays-nginx
-    profiles: [https]
-    restart: unless-stopped
-    ports:
-      - "192.168.1.112:80:80"
-      - "192.168.1.112:443:443"
-    volumes:
-      - ./nginx/https:/etc/nginx/conf.d:ro
-      - ./acme-webroot:/var/www/certbot:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    networks:
-      - app_egress
     security_opt:
       - no-new-privileges:true
 

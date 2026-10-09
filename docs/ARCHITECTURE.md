@@ -38,31 +38,39 @@ construit l’image sur les PR, puis publie et déploie les commits de `main`
 via GHCR et Tailscale SSH. Le workflow applique les migrations avant de
 démarrer l’application ; son contrôle `/health` est interne au conteneur.
 
-L’entrée web Nginx/Certbot est implémentée dans les fichiers de configuration,
-mais n’est pas encore déployée ni validée sur le Geekom :
+Le socle Nginx/Certbot commun est installé sur le Geekom et documenté dans
+le dépôt `geekom`. Le raccordement ci-dessous est préparé dans ce dépôt, mais
+**pas encore déployé ni validé** :
 
 ```text
 Internet → IPv4 publique fixe / routeur TCP 80 et 443
-         → Nginx sur 192.168.1.112 → app:8000 → db:5432
+         → Nginx de l’hôte → 127.0.0.1:8000 → app:8000 → db:5432
 ```
 
-- `nginx-bootstrap` (profil `bootstrap`) sert uniquement le challenge ACME
-  HTTP-01 ; les autres chemins répondent 404.
-- `nginx` (profil `https`) termine TLS, redirige HTTP vers HTTPS hors challenge
-  ACME et relaie HTTP/WebSocket vers `app` sur le réseau `app_egress`.
-  La résolution DNS Docker est renouvelée pour suivre les recréations de l’app.
-- L’application ne publie aucun port hôte. PostgreSQL reste sur le réseau
-  `backend` interne ; les ports LAN/Tailscale déclarés ne sont pas effectifs
-  dans l’état observé sur le Geekom.
-- Certbot est prévu sur l’hôte Debian. Nginx monte `/etc/letsencrypt` en lecture
-  seule et le webroot ACME est partagé via `acme-webroot`. Un drop-in systemd
-  préparé dans `ops/` recharge Nginx après un renouvellement réussi.
+- Compose ne contient que `db` et `app`. Le Nginx hôte possède les ports 80/443 ;
+  aucun proxy applicatif Docker ni montage de clés privées n’est nécessaire.
+- `app` publie `127.0.0.1:8000:8000`. PostgreSQL et son réseau `backend` interne
+  sont inchangés ; les ports LAN/Tailscale n’étaient pas effectifs lors du
+  diagnostic antérieur à la migration Docker CE et restent à revérifier.
+- `nginx/https/default.conf` est le vhost du Nginx hôte. Il déclare le domaine,
+  les chemins du certificat Overlays et l’upstream loopback ; il inclut le
+  snippet HTTP-01 commun. Il redirige HTTP vers HTTPS hors challenge et relaie
+  HTTP/WebSocket, avec une variable Upgrade et une zone TLS propres à Overlays.
+- Nginx remplace les en-têtes proxy clients. Uvicorn reçoit
+  `FORWARDED_ALLOW_IPS` depuis `OVERLAYS_PROXY_IP` : uniquement la passerelle
+  `app_egress`, observée à `172.18.0.1`, plutôt qu’un wildcard. Cela permet de
+  reconstruire les URL HTTPS et WebSocket derrière la publication Docker.
+- Avant d’arrêter l’application, la CI vérifie cette adresse sur le réseau
+  effectif. Après démarrage, elle contrôle la santé dans le conteneur et sur le
+  port loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
+  ni à Certbot ; l’installation/rechargement du vhost reste manuel.
 
-Les deux profils Nginx ne doivent pas tourner simultanément : ils partagent
-le port 80. Le workflow transfère leurs configurations et tente de démarrer
-HTTPS si le certificat est détecté ; la vérification faite sous `deploy` peut
-être bloquée par les permissions root de Certbot. Procédure, limites et
-validations attendues : [DEPLOY.md](DEPLOY.md).
+Le socle commun gère indépendamment le webroot, les certificats et le
+renouvellement/rechargement. Les workflows réutilisables restent à définir.
+Le moteur de l’hôte a été mis à jour vers Docker CE ; son état est suivi dans
+`geekom`. La publication loopback et son isolation LAN restent à contrôler lors
+du déploiement applicatif. Procédure, limites et validations attendues :
+[DEPLOY.md](DEPLOY.md).
 
 ## Giveaway et échéance
 

@@ -54,6 +54,7 @@ jobs:
       GEEKOM_APP_DIR: ${{ vars.GEEKOM_APP_DIR }}
       GEEKOM_DEPLOY_USER: ${{ vars.GEEKOM_DEPLOY_USER }}
       GEEKOM_TAILSCALE_HOST: ${{ vars.GEEKOM_TAILSCALE_HOST }}
+      OVERLAYS_PROXY_IP: ${{ vars.OVERLAYS_PROXY_IP || '172.18.0.1' }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,7 +88,7 @@ jobs:
           umask 077
 
           required=(
-            GEEKOM_APP_DIR GEEKOM_DEPLOY_USER GEEKOM_TAILSCALE_HOST
+            GEEKOM_APP_DIR GEEKOM_DEPLOY_USER GEEKOM_TAILSCALE_HOST OVERLAYS_PROXY_IP
             TWITCH_ENABLED TWITCH_CLIENT_ID TWITCH_CLIENT_SECRET TWITCH_BOT_ID TWITCH_OWNER_ID
             TWITCH_BOT_LOGIN TWITCH_ADMIN_REDIRECT_URI SESSION_SECRET
             SESSION_COOKIE_SECURE SESSION_MAX_AGE_SECONDS TWITCH_COMMAND_PREFIX
@@ -172,6 +173,10 @@ jobs:
               raise SystemExit("GEEKOM_TAILSCALE_HOST must be an IPv4 address") from exc
           if not isinstance(address, ipaddress.IPv4Address):
               raise SystemExit("GEEKOM_TAILSCALE_HOST must be an IPv4 address")
+          try:
+              ipaddress.IPv4Address(os.environ["OVERLAYS_PROXY_IP"])
+          except ValueError:
+              raise SystemExit("OVERLAYS_PROXY_IP must be the Docker app_egress IPv4 gateway, not a wildcard or subnet") from None
 
           keys = (
               "TWITCH_ENABLED",
@@ -195,6 +200,7 @@ jobs:
               "POSTGRES_ADMIN_PASSWORD",
               "TAILSCALE_IPV4",
               "OVERLAYS_IMAGE_TAG",
+              "OVERLAYS_PROXY_IP",
           )
 
           def compose_value(value: str, key: str) -> str:
@@ -273,7 +279,7 @@ jobs:
             "mkdir -p '$GEEKOM_APP_DIR' '$remote_stage' && chmod 750 '$GEEKOM_APP_DIR' && chmod 700 '$remote_stage'"
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 compose.yaml \
             "$target:$remote_stage/compose.yaml"
-          scp -r -B "${ssh_options[@]}" -o ConnectTimeout=20 nginx ops \
+          scp -r -B "${ssh_options[@]}" -o ConnectTimeout=20 nginx \
             "$target:$remote_stage/"
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$APP_ENV_FILE" \
             "$target:$remote_stage/.env"
@@ -292,30 +298,30 @@ jobs:
             -o "UserKnownHostsFile=$TAILSCALE_SSH_KNOWN_HOSTS"
           )
           ssh "${ssh_options[@]}" -o ConnectTimeout=20 "$target" \
-            "bash -s -- '$GEEKOM_APP_DIR' '$remote_stage'" <<'REMOTE'
+            "bash -s -- '$GEEKOM_APP_DIR' '$remote_stage' '$OVERLAYS_PROXY_IP'" <<'REMOTE'
           set -euo pipefail
           app_dir=$1
           stage=$2
+          proxy_ip=$3
           trap 'rm -rf -- "$stage"' EXIT
 
           install -m 0644 "$stage/compose.yaml" "$stage/compose.yaml.ready"
           install -m 0600 "$stage/.env" "$stage/.env.ready"
           mv -f "$stage/compose.yaml.ready" "$app_dir/compose.yaml"
           mv -f "$stage/.env.ready" "$app_dir/.env"
-          install -d -m 0755 "$app_dir/nginx/bootstrap" "$app_dir/nginx/https" \
-            "$app_dir/acme-webroot" "$app_dir/ops/systemd/certbot.service.d"
-          install -m 0644 "$stage/nginx/bootstrap/default.conf" \
-            "$app_dir/nginx/bootstrap/default.conf"
+          install -d -m 0755 "$app_dir/nginx/https"
           install -m 0644 "$stage/nginx/https/default.conf" \
             "$app_dir/nginx/https/default.conf"
-          install -m 0644 "$stage/ops/systemd/certbot.service.d/overlays.conf" \
-            "$app_dir/ops/systemd/certbot.service.d/overlays.conf"
           install -d -m 700 "$stage/docker"
           install -m 0600 "$stage/docker-config.json" "$stage/docker/config.json"
 
           cd "$app_dir"
           export DOCKER_CONFIG="$stage/docker"
           docker compose config --quiet
+          if ! command -v python3 >/dev/null; then
+            echo "::error::Host Python 3 is required for the loopback health check (provided by Debian Certbot)."
+            exit 1
+          fi
           docker compose up -d --wait db
 
           docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
@@ -370,7 +376,14 @@ jobs:
           PREFLIGHT
 
           docker compose pull app
-          docker pull nginx:1.30.5-alpine3.24
+          # Create app_egress without starting the web server or bot; check before downtime.
+          docker compose run --rm --no-deps app python -c 'pass'
+          project_name=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$(docker compose ps -q db)")
+          proxy_gateways=$(docker network inspect "${project_name}_app_egress" --format '{{range .IPAM.Config}}{{println .Gateway}}{{end}}')
+          if ! grep -Fxq -- "$proxy_ip" <<<"$proxy_gateways"; then
+            echo "::error::Docker app_egress gateway does not match OVERLAYS_PROXY_IP; check the network and update this non-secret GitHub variable."
+            exit 1
+          fi
           docker compose stop app >/dev/null 2>&1 || true
           docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'CREDENTIALS'
           \set ON_ERROR_STOP on
@@ -421,15 +434,20 @@ jobs:
             exit 1
           fi
 
-          certificate_dir=/etc/letsencrypt/live/overlays.necsus.dev
-          if [[ -s "$certificate_dir/fullchain.pem" && -s "$certificate_dir/privkey.pem" ]]; then
-            docker compose --profile https up -d nginx
-            docker compose --profile https exec -T nginx nginx -t
-            docker compose --profile https exec -T nginx nginx -s reload
-            echo "HTTPS reverse proxy is active."
-          else
-            echo "HTTPS reverse proxy not started: the Let's Encrypt certificate is not provisioned yet."
+          if ! python3 -c '
+          import json
+          import urllib.request
+
+          # Probe the published port directly, not through host HTTP proxy settings.
+          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+          with opener.open("http://127.0.0.1:8000/health", timeout=2) as response:
+              if response.status != 200 or json.load(response) != {"status": "ok"}:
+                  raise SystemExit(1)
+          ' >/dev/null 2>&1; then
+            echo "::error::Application did not pass its host loopback health check; check port 8000 publication."
+            exit 1
           fi
+          echo "Host loopback application health check passed. Shared Nginx HTTPS must be validated separately."
           REMOTE
 
       - name: Remove temporary remote deployment files
