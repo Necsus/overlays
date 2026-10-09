@@ -31,6 +31,47 @@ Le service est la source de vérité. Chaque streamer possède un moteur, un
 service, un verrou asynchrone et un minuteur ; OBS affiche les données mais ne
 choisit jamais les gagnants.
 
+## Déploiement et entrée web
+
+La configuration du dépôt cible Debian et Docker Compose. GitHub Actions
+construit l’image sur les PR, puis publie et déploie les commits de `main`
+via GHCR et Tailscale SSH. Le workflow applique les migrations avant de
+démarrer l’application ; son contrôle `/health` est interne au conteneur.
+
+Le socle Nginx/Certbot commun est installé sur le Geekom et documenté dans
+le dépôt `geekom`. Le raccordement ci-dessous est préparé dans ce dépôt, mais
+**pas encore déployé ni validé** :
+
+```text
+Internet → IPv4 publique fixe / routeur TCP 80 et 443
+         → Nginx de l’hôte → 127.0.0.1:8000 → app:8000 → db:5432
+```
+
+- Compose ne contient que `db` et `app`. Le Nginx hôte possède les ports 80/443 ;
+  aucun proxy applicatif Docker ni montage de clés privées n’est nécessaire.
+- `app` publie `127.0.0.1:8000:8000`. PostgreSQL et son réseau `backend` interne
+  sont inchangés ; les ports LAN/Tailscale n’étaient pas effectifs lors du
+  diagnostic antérieur à la migration Docker CE et restent à revérifier.
+- `nginx/https/default.conf` est le vhost du Nginx hôte. Il déclare le domaine,
+  les chemins du certificat Overlays et l’upstream loopback ; il inclut le
+  snippet HTTP-01 commun. Il redirige HTTP vers HTTPS hors challenge et relaie
+  HTTP/WebSocket, avec une variable Upgrade et une zone TLS propres à Overlays.
+- Nginx remplace les en-têtes proxy clients. Uvicorn reçoit
+  `FORWARDED_ALLOW_IPS` depuis `OVERLAYS_PROXY_IP` : uniquement la passerelle
+  `app_egress`, observée à `172.18.0.1`, plutôt qu’un wildcard. Cela permet de
+  reconstruire les URL HTTPS et WebSocket derrière la publication Docker.
+- Avant d’arrêter l’application, la CI vérifie cette adresse sur le réseau
+  effectif. Après démarrage, elle contrôle la santé dans le conteneur et sur le
+  port loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
+  ni à Certbot ; l’installation/rechargement du vhost reste manuel.
+
+Le socle commun gère indépendamment le webroot, les certificats et le
+renouvellement/rechargement. Les workflows réutilisables restent à définir.
+Le moteur de l’hôte a été mis à jour vers Docker CE ; son état est suivi dans
+`geekom`. La publication loopback et son isolation LAN restent à contrôler lors
+du déploiement applicatif. Procédure, limites et validations attendues :
+[DEPLOY.md](DEPLOY.md).
+
 ## Giveaway et échéance
 
 ```text
@@ -95,7 +136,7 @@ et appliquées explicitement sous verrou PostgreSQL. La version 2 supprime les
 giveaways existants (données de test), ajoute leur propriétaire et autorise
 plusieurs streamers actifs. Une nouvelle exécution ne rejoue pas les versions
 enregistrées ; l'application contrôle la version au démarrage. Les commandes sont dans le
-[README](../README.md#installation-et-lancement).
+[README](../README.md#développement-local).
 
 Un verrou applicatif commun sérialise les changements d'identité et de clés avec
 l'authentification/enregistrement des WebSockets, pour ne pas laisser un accès

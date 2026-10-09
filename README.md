@@ -4,7 +4,7 @@ Plateforme d’overlays Twitch pour OBS, pilotés depuis le chat et administrés
 
 ## Développement local
 
-Prérequis : Python 3.11+ et accès au PostgreSQL 18 du Geekom. La release utilise `overlays` ; le développement utilise la base distincte `overlays_dev`.
+Prérequis : Python 3.11+ et accès au PostgreSQL 18 du Geekom. La release utilise `overlays` ; le développement utilise la base distincte `overlays_dev`. L’accès PostgreSQL depuis le poste local était non opérationnel lors du diagnostic initial et reste à revérifier après la mise à jour Docker ; voir les [limites réseau](docs/DEPLOY.md#4-données-réseau-et-limites).
 
 ```bash
 python -m venv .venv
@@ -20,9 +20,11 @@ Pour le développement, `PSQL_DB` et `PSQL_USER`/`PSQL_PASSWORD` doivent désign
 
 ## Déploiement sur le Geekom
 
-Un push sur `main` publie une image taguée par commit sur GHCR, puis déclenche le déploiement Debian/Compose via GitHub Actions, Tailscale et Tailscale SSH. La configuration requise et les étapes sont dans [docs/DEPLOY.md](docs/DEPLOY.md). Les PR vers `main` construisent l’image sans la publier.
+Un push sur `main` publie une image taguée par commit sur GHCR, puis la déploie sur le Geekom via GitHub Actions, Tailscale et Tailscale SSH. Les PR vers `main` construisent l’image sans la publier.
 
-La release et le développement ont des bases et des rôles PostgreSQL distincts. Les données persistent dans des volumes Docker ; le workflow ne les supprime pas. Le déploiement peut interrompre brièvement l’application pendant la migration. DNS et proxy HTTPS sont configurés séparément.
+Le Nginx/Certbot commun de l’hôte est en place. Le raccordement Overlays via le port loopback et son vhost HTTPS est **préparé dans le dépôt, pas encore déployé ni validé**. La procédure et les limites de l’automatisation sont dans [docs/DEPLOY.md](docs/DEPLOY.md) ; l’avancement restant est indexé dans la [roadmap](docs/ROADMAP.md). L’ancien script de mise à jour de la release a été supprimé.
+
+La release et le développement ont des bases et des rôles PostgreSQL distincts. Les données persistent dans des volumes Docker ; le workflow ne les supprime pas. Le déploiement peut interrompre brièvement l’application pendant la migration.
 
 ## Administration et OBS
 
