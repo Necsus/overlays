@@ -35,8 +35,10 @@ choisit jamais les gagnants.
 
 La configuration du dépôt cible Debian et Docker Compose. GitHub Actions
 construit l’image sur les PR, puis publie et déploie les commits de `main`
-via GHCR et Tailscale SSH. Le workflow applique les migrations avant de
-démarrer l’application ; son contrôle `/health` est interne au conteneur.
+via GHCR et Tailscale SSH. Le workflow prévoit les migrations avant de démarrer
+l’application, puis des contrôles `/health` dans le conteneur et sur le loopback.
+Le dernier job vert n’a pas exécuté cette séquence jusqu’au bout ; le correctif
+stdin ci-dessous reste à valider en CI réelle.
 
 Le socle Nginx/Certbot commun est installé sur le Geekom et documenté dans
 le dépôt `geekom`. Le raccordement ci-dessous est préparé dans ce dépôt, mais
@@ -64,6 +66,11 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
   effectif. Après démarrage, elle contrôle la santé dans le conteneur et sur le
   port loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
   ni à Certbot ; l’installation/rechargement du vhost reste manuel.
+- Le script distant arrive sur STDIN via `bash -s`. Les commandes applicatives
+  `run` et `exec` sont non interactives, pour préserver le flux du script ; les
+  commandes PostgreSQL reçoivent au contraire leurs heredocs SQL dédiés. Sans
+  cette distinction, une commande ponctuelle peut absorber la suite du script
+  et produire un job vert sans démarrer l’application.
 
 Le socle commun gère indépendamment le webroot, les certificats et le
 renouvellement/rechargement. Les workflows réutilisables restent à définir.
