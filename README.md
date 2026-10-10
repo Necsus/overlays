@@ -28,6 +28,7 @@ Les données d’exécution persistent dans le volume `overlays_overlays_runtime
 
 ## Administration et OBS
 
+- `/` : accueil et accès à l’application.
 - `/admin` : connexion Twitch et gestion de l’overlay.
 - `/health` : contrôle de santé du service.
 - `/docs` : documentation OpenAPI.
