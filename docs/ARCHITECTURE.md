@@ -163,8 +163,23 @@ l'identifiant stable du broadcaster et de l'auteur, jamais le nom affiché ni un
 identifiant fourni par le navigateur.
 
 La session administrative est signée, expirante et portée par un cookie
-`HttpOnly`, `SameSite=Lax`, sécurisé en HTTPS. Les états OAuth sont courts et à
-usage unique. Les tokens OAuth restent côté serveur, hors des tables métier. Chaque message
+`HttpOnly`, `SameSite=Lax`, sécurisé en HTTPS. Chaque transaction OAuth possède
+un state et un secret navigateur indépendants, valables dix minutes. Le secret
+est dans un cookie `HttpOnly`, `SameSite=Lax`, sans Domain et avec Path `/` ;
+son nom est propre au state pour préserver les connexions en onglets parallèles.
+En HTTPS, ou si `SESSION_COOKIE_SECURE` est activé, il est `Secure` avec le
+préfixe `__Host-`, empêchant son injection par un sous-domaine. Le HTTP local
+avec cette option désactivée utilise un cookie sans ce préfixe.
+Le callback vérifie la liaison avant tout échange du code ou effet métier ;
+un mauvais navigateur ne consomme pas le state légitime. La consommation valide
+est atomique et à usage unique. Le cookie consommé est supprimé après succès,
+annulation ou erreur HTTP gérée ; un flux abandonné expire. Ces cookies ne
+remplacent pas la session administrative et leur secret n'est pas envoyé à Twitch.
+Le redémarrage invalide les transactions en mémoire : une connexion en cours
+doit alors être relancée. Les contrôles locaux sont décrits dans
+[WIS-0001](security/WIS-0001-oauth-browser-binding.md) ; les validations réelles
+navigateur/Twitch restent à faire.
+Les tokens OAuth restent côté serveur, hors des tables métier. Chaque message
 EventSub est routé par broadcaster ; la révocation d'un abonnement retire
 uniquement ce streamer du routage des commandes. Son minuteur, ses données et
 ses connexions OBS en lecture restent indépendants.
@@ -185,6 +200,7 @@ concernent que le propriétaire correspondant.
 
 | Route | Fonction |
 | --- | --- |
+| `/` | Page d’accueil publique avec accès à l’application |
 | `/admin`, `/api/admin/session` | Interface et état administratif |
 | `/auth/twitch/login`, `/auth/twitch/bot/login` | OAuth streamer et bot |
 | `/auth/twitch/callback`, `/auth/logout` | Retour OAuth et déconnexion |
