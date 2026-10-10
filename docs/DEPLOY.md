@@ -1,16 +1,15 @@
 # Déploiement sur le Geekom
 
-Le déploiement de production utilise Debian, Docker Compose et GitHub Actions. Un push sur `main` construit l’image, la publie sur GHCR, puis la déploie sur le Geekom via Tailscale et Tailscale SSH. La procédure NixOS historique n’est plus la procédure active.
+Le déploiement de production utilise Debian, Docker Compose et GitHub Actions. Un push sur `main` construit l’image, la publie sur GHCR, puis la déploie sur le Geekom via Tailscale et Tailscale SSH.
 
 ## État et points à confirmer
 
-- **Observé** : le workflow du commit `934d1bd` a terminé vert, mais le Geekom ne montre que PostgreSQL et le port loopback ne répond pas. Ses traces montrent un conteneur applicatif ponctuel, pas le service persistant ni les messages de réussite des contrôles de santé. Le succès du job ne prouve donc pas leur exécution.
-- **Socle commun en place** : Nginx et Certbot sur l’hôte, webroot HTTP-01 commun, certificat Overlays émis, timer planifié et dry-run réussi avec le hook de rechargement du Nginx hôte. La source de cet état et du runbook commun est le dépôt d’infrastructure `geekom` (`docs/architecture.md` et `docs/runbooks/nginx-tls.md`). Ne pas réinstaller ce socle par application.
-- **Correction préparée, non validée sur le serveur** : les commandes applicatives Compose désactivent maintenant leur mode interactif, pour ne pas consommer le script transmis via `bash -s`. La configuration loopback/vhost est livrable, mais l’application persistante et HTTPS ne sont pas en service.
-- **Contrôlé localement** : YAML, syntaxe shell/Python du workflow, rendu Compose avec données fictives et sans lecture du `.env` réel, conservation de PostgreSQL/volumes/réseaux et des blocs SQL/migration. Vingt contrôles ponctuels isolés couvrent la validation IPv4, la garde de passerelle et la sonde HTTP. Seize contrôles supplémentaires simulés couvrent la continuité du script pour les quatre commandes applicatives, leurs erreurs et la transmission intacte des heredocs SQL. Ils ne valident pas un conteneur ou un réseau réel. Le LSP YAML est indisponible.
-- **Non validé** : exécution de la CI corrigée jusqu’aux messages de réussite des deux contrôles de santé, présence durable de l’application, publication réelle du port, confiance proxy effective, chargement de ce vhost sur le Geekom, HTTPS externe, OAuth Twitch et WebSocket OBS. Le daemon Docker local et un Nginx local sont indisponibles ; les contrôles statiques ou simulés ne remplacent pas ces validations.
+- **PostgreSQL central** : service en bonne santé, bases `overlays` et `overlays_dev` et rôles distincts provisionnés. L’accès pgAdmin depuis le LAN avec TLS et vérification du certificat est validé. Le schéma de production est en version 2.
+- **Réseau web** : Nginx/Certbot, le webroot HTTP-01 commun, le certificat Overlays et le vhost HTTPS sont en place. Après le prochain déploiement, revérifier `/health`, `/admin` et OAuth. Valider également l’accès depuis un réseau extérieur, OBS/WebSocket et le renouvellement Certbot avec le vhost TLS actif. La source de vérité du socle hôte est le dépôt `geekom`.
+- **Application** : le conteneur applicatif est arrêté en attendant la publication et le déploiement du workflow/Compose adaptés au PostgreSQL central. Ces changements locaux ne sont pas encore publiés.
+- **Contrôles locaux** : syntaxe YAML et Bash du workflow, syntaxe Python, rendu du Compose avec valeurs fictives, `git diff --check` et liens Markdown des documents modifiés vérifiés. `make check` dans `geekom` ne vérifie que la présence des fichiers de fondation. Aucun test automatisé applicatif ni déploiement de l’application contre le PostgreSQL central n’a été exécuté.
 
-La mise en service nécessite la procédure ci-dessous et le traitement des [limites de l’automatisation](#limites-de-lautomatisation). Un workflow vert ne suffit pas à déclarer le site opérationnel.
+Le workflow de déploiement n’administre pas PostgreSQL : il utilise le réseau central, vérifie la connexion avec le rôle applicatif et exécute les migrations de schéma Overlays. Le provisioning, l’accès LAN et les opérations PostgreSQL relèvent du dépôt et des runbooks Geekom. Un workflow vert ne valide pas à lui seul les parcours externes ni OBS/WebSocket.
 
 Le workflow est [`../.github/workflows/publish-ghcr.yml`](../.github/workflows/publish-ghcr.yml). Il suppose que le Geekom est déjà préparé : Debian, Docker Engine 28 ou supérieur avec le plugin Compose, Nginx/Certbot communs, Python 3 sur l’hôte (fourni par Certbot Debian), Tailscale actif, Tailscale SSH configuré et compte `deploy` autorisé à utiliser Docker. Le compte doit pouvoir écrire dans `/home/deploy/apps/overlays` (ou le chemin configuré). Ne pas modifier SSH, Tailscale ou le pare-feu dans le cadre de ce guide.
 
@@ -22,11 +21,9 @@ Dans **Settings → Secrets and variables → Actions**, ajouter les éléments 
 
 - `GEEKOM_APP_DIR` : chemin sous `/home/deploy/apps`, par exemple `/home/deploy/apps/overlays`.
 - `GEEKOM_DEPLOY_USER` : `deploy`.
-- `GEEKOM_TAILSCALE_HOST` : adresse IPv4 Tailscale du Geekom. La publication PostgreSQL indiquée par Compose n’était pas effective avant la migration Docker CE et reste à revérifier sur son réseau `internal: true` ; voir les limites réseau ci-dessous.
+- `GEEKOM_TAILSCALE_HOST` : adresse IPv4 Tailscale du Geekom, utilisée par le runner pour Tailscale SSH.
 - `OVERLAYS_PROXY_IP` : facultative, IPv4 de la passerelle Docker `app_egress` par laquelle Nginx atteint Uvicorn. Valeur par défaut vérifiée sur le Geekom : `172.18.0.1`. La CI refuse un wildcard, un CIDR ou une adresse différente des passerelles de ce réseau. Si le réseau est recréé avec une autre passerelle, actualiser cette variable avant le prochain déploiement ; ne pas élargir la confiance à `*`.
-- `POSTGRES_ADMIN_USER` : rôle d’administration PostgreSQL, par exemple `overlays_admin`.
-- `PSQL_DB`, `PSQL_USER` : base et rôle de release, par exemple `overlays` et `overlays_release`.
-- `PSQL_DEV_DB`, `PSQL_DEV_USER` : base et rôle pour le poste de développement, par exemple `overlays_dev` pour les deux.
+- `PSQL_DB`, `PSQL_USER` : base et rôle applicatif de production, provisionnés depuis Geekom (par exemple `overlays` et `overlays_release`). L’hôte Compose est le nom interne `postgres` ; l’application ne reçoit aucun identifiant admin ni rôle de développement.
 - `TWITCH_ENABLED`, `TWITCH_CLIENT_ID`, `TWITCH_BOT_ID`, `TWITCH_OWNER_ID`, `TWITCH_BOT_LOGIN`, `TWITCH_ADMIN_REDIRECT_URI`.
 - `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE_SECONDS`, `TWITCH_COMMAND_PREFIX`.
 
@@ -34,11 +31,11 @@ Dans **Settings → Secrets and variables → Actions**, ajouter les éléments 
 
 - `TS_OAUTH_CLIENT_ID`, `TS_AUDIENCE` : identité Tailscale utilisée par l’action GitHub et configuration correspondante dans Tailscale.
 - `TWITCH_CLIENT_SECRET`, `SESSION_SECRET`.
-- `POSTGRES_ADMIN_PASSWORD`, `PSQL_PASSWORD` (release), `PSQL_DEV_PASSWORD` (développement).
+- `PSQL_PASSWORD` : mot de passe du rôle applicatif de production, provisionné depuis Geekom. Le `.env` local utilise aussi le nom `PSQL_PASSWORD`, mais avec la valeur distincte du rôle `overlays_dev`.
 
 Le `GITHUB_TOKEN` est fourni automatiquement à Actions. Le paquet GHCR doit être accessible au workflow de déploiement. Dans la politique Tailscale, autoriser le tag `tag:ci` à joindre le Geekom comme utilisateur `deploy` via Tailscale SSH.
 
-Utiliser des rôles et mots de passe distincts pour l’administration PostgreSQL, la release et le développement. `PSQL_DEV_PASSWORD` doit correspondre au mot de passe du rôle de développement dans le `.env` du poste local. Garder les noms de bases, rôles et rôle admin stables une fois le volume PostgreSQL initialisé.
+Utiliser un rôle et un mot de passe distincts pour chaque application/environnement ; le compte admin reste uniquement côté Geekom. Les noms `PSQL_DB` et `PSQL_USER` doivent correspondre à la base et au rôle provisionnés sur l’instance centrale. Ne jamais saisir de mot de passe dans cette documentation ou les journaux.
 
 Pour Twitch, `TWITCH_ADMIN_REDIRECT_URI` doit correspondre exactement à l’URL déclarée dans la console Twitch, généralement `https://overlays.necsus.dev/auth/twitch/callback`. Ne pas activer Twitch en développement sur le même canal que la release.
 
@@ -46,13 +43,13 @@ Pour Twitch, `TWITCH_ADMIN_REDIRECT_URI` doit correspondre exactement à l’URL
 
 Une PR vers `main` lance seulement une construction de vérification. Le déploiement se déclenche après un push sur `main` ; modifier une variable ou un secret GitHub ne déclenche pas de workflow. Après une modification de configuration, lancer le workflow en poussant un changement autorisé sur `main`.
 
-Le job valide les paramètres, génère temporairement un `.env` protégé, rejoint le tailnet, puis transfère Compose et le vhost applicatif Nginx. La sonde `tailscale ssh` récupère la clé d’hôte annoncée par Tailscale ; SSH et SCP la vérifient strictement, sans désactiver le contrôle de clé. Sur le Geekom, le workflow démarre PostgreSQL, prépare les rôles et bases, vérifie le garde-fou de migration et tire l’image du commit. Une commande Python sans serveur ni bot initialise le réseau applicatif si nécessaire ; la CI vérifie sa passerelle avant d’arrêter l’application. Elle conserve ensuite la séquence existante de mise à jour des rôles, migration et configuration, puis démarre `app`. Elle contrôle `/health` dans le conteneur et depuis l’hôte sur `127.0.0.1:8000`, avec HTTP 200 et `{"status":"ok"}` attendus pour la sonde hôte.
+Le job valide les paramètres, génère temporairement un `.env` protégé contenant uniquement les identifiants de connexion applicatifs, rejoint le tailnet, puis transfère Compose et le vhost applicatif Nginx. La sonde `tailscale ssh` récupère la clé d’hôte annoncée par Tailscale ; SSH et SCP la vérifient strictement. Le conteneur applicatif étant arrêté, le redéploiement attend la publication du workflow/Compose adaptés. Ceux-ci ne démarrent pas PostgreSQL et ne créent ni base ni rôle : ils rejoignent `geekom_postgres_clients`, vérifient la connexion et le garde-fou via le rôle applicatif, appliquent les migrations de schéma Overlays puis démarrent `app`. Le réseau central et la base de production sont provisionnés. Le workflow contrôle `/health` dans le conteneur et sur `127.0.0.1:8000`. L’instance et son provisionnement relèvent exclusivement du dépôt et des opérations Geekom.
 
-Le script distant est transmis par l’entrée standard à `bash -s`. Les trois `compose run` applicatifs et le `compose exec` de santé utilisent `--interactive=false` : leur mode interactif par défaut pourrait consommer les commandes restantes et laisser Bash terminer avec succès avant le démarrage et les sondes. Les `exec` PostgreSQL gardent leur entrée standard, redirigée vers leurs propres heredocs SQL ; ne pas leur appliquer ce drapeau.
+Le script distant est transmis par l’entrée standard à `bash -s`. Les commandes ponctuelles `compose run` et le contrôle `compose exec` de santé sont non interactifs pour préserver ce flux. La version locale n’effectue aucun `exec` PostgreSQL, heredoc SQL ou bootstrap d’administration ; la création des bases/rôles est opérée depuis Geekom.
 
 Le workflow ne lit plus les certificats et ne démarre ni ne recharge Nginx. Il dépose le vhost dans `$GEEKOM_APP_DIR/nginx/https/default.conf` ; son installation dans `/etc/nginx` reste manuelle. Les changements ultérieurs de ce fichier ne sont donc pas appliqués au proxy par un simple déploiement applicatif.
 
-La configuration Twitch et le préfixe de commande persistés dans `settings.json` sont réécrits depuis les variables GitHub à chaque déploiement. Les valeurs modifiées depuis l’interface admin peuvent donc être remplacées. L’application est arrêtée pendant la migration : prévoir une brève interruption.
+La configuration Twitch et le préfixe de commande persistés dans `settings.json` sont réécrits depuis les variables GitHub à chaque déploiement. Les valeurs modifiées depuis l’interface admin peuvent donc être remplacées. Le déploiement arrête l’application pendant la mise à jour : prévoir une brève interruption.
 
 Consulter l’onglet **Actions** pour le résultat. Le workflow évite d’imprimer les valeurs secrètes et ne dump pas les journaux des conteneurs. En cas d’échec, partager le nom de l’étape et le message non sensible, jamais les fichiers `.env`, tokens ou logs contenant des secrets.
 
@@ -137,8 +134,6 @@ Le site n’est déclaré opérationnel qu’après ces validations et le test d
 
 ## 4. Données, réseau et limites
 
-Les données PostgreSQL et la configuration d’exécution de l’application sont stockées dans des volumes Docker persistants. Le workflow ne fait pas `docker compose down -v` et ne supprime pas ces volumes. PostgreSQL est attaché uniquement au réseau Docker `backend` configuré `internal: true`. Bien que Compose déclare des ports LAN/Tailscale, ils n’étaient pas effectivement publiés lors du diagnostic sous l’ancien moteur Docker ; cet état reste à revérifier après sa mise à jour. L’application, elle, communique avec PostgreSQL sur ce réseau. Rendre PostgreSQL accessible depuis le poste de développement nécessitera une décision réseau séparée ; ne pas supprimer `internal: true` à l’aveugle.
-
-Les bases `overlays` (release) et `overlays_dev` (développement) sont distinctes, avec des rôles séparés. Le contrôle de migration refuse le passage du schéma v1 si des giveaways existants seraient supprimés. Toute base préexistante mérite une sauvegarde vérifiée avant une migration.
+Les données d’exécution de l’application sont stockées dans des volumes Docker persistants. Le workflow ne fait pas `docker compose down -v` et ne supprime pas ces volumes. PostgreSQL est géré centralement dans `geekom` ; l’application le rejoint sur le réseau Docker interne `geekom_postgres_clients`. La production et le développement utilisent les bases `overlays` et `overlays_dev`, avec des rôles distincts. L’accès pgAdmin depuis le LAN utilise TLS avec vérification du certificat ; le port PostgreSQL n’est publié ni sur Tailscale ni sur Internet. Ne pas modifier les réseaux ou publications à l’aveugle. Le garde-fou de schéma v1/v2 demeure propre aux migrations Overlays.
 
 Conserver les secrets uniquement dans GitHub et les environnements prévus. Les administrateurs du démon Docker sur le Geekom peuvent accéder aux variables d’environnement des conteneurs. Pour sauvegardes et restauration, voir [ADR-0011](adr/0011-exploitation-durable.md) et le [README](../README.md).

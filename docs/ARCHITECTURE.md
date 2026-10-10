@@ -33,27 +33,31 @@ choisit jamais les gagnants.
 
 ## Déploiement et entrée web
 
-La configuration du dépôt cible Debian et Docker Compose. GitHub Actions
-construit l’image sur les PR, puis publie et déploie les commits de `main`
-via GHCR et Tailscale SSH. Le workflow prévoit les migrations avant de démarrer
-l’application, puis des contrôles `/health` dans le conteneur et sur le loopback.
-Le dernier job vert n’a pas exécuté cette séquence jusqu’au bout ; le correctif
-stdin ci-dessous reste à valider en CI réelle.
-
-Le socle Nginx/Certbot commun est installé sur le Geekom et documenté dans
-le dépôt `geekom`. Le raccordement ci-dessous est préparé dans ce dépôt, mais
-**pas encore déployé ni validé** :
+La production utilise Debian, Docker Compose et GitHub Actions, qui construit
+l’image sur les PR et publie/déploie `main` via GHCR et Tailscale SSH. Nginx et
+Certbot sont gérés sur l’hôte par le dépôt `geekom`; le vhost HTTPS Overlays est
+en place. PostgreSQL central est en service, avec accès pgAdmin LAN/TLS validé.
+Le conteneur applicatif est arrêté en attente de la publication et du
+redéploiement des changements locaux du workflow et du Compose.
 
 ```text
 Internet → IPv4 publique fixe / routeur TCP 80 et 443
-         → Nginx de l’hôte → 127.0.0.1:8000 → app:8000 → db:5432
+         → Nginx de l’hôte → 127.0.0.1:8000 → app:8000 → geekom-postgres:5432
 ```
 
-- Compose ne contient que `db` et `app`. Le Nginx hôte possède les ports 80/443 ;
-  aucun proxy applicatif Docker ni montage de clés privées n’est nécessaire.
-- `app` publie `127.0.0.1:8000:8000`. PostgreSQL et son réseau `backend` interne
-  sont inchangés ; les ports LAN/Tailscale n’étaient pas effectifs lors du
-  diagnostic antérieur à la migration Docker CE et restent à revérifier.
+- Le Compose applicatif ne contient que `app`, qui rejoint le réseau externe
+  interne `geekom_postgres_clients` créé par Geekom. Le Nginx hôte possède les
+  ports 80/443 ; aucun proxy applicatif Docker ni montage de clés privées n’est
+  nécessaire.
+- `app` publie `127.0.0.1:8000:8000` et communique avec PostgreSQL sur le réseau
+  Docker interne. Le port PostgreSQL est publié uniquement sur
+  `192.168.1.112:5432` pour l’accès LAN TLS ; aucun binding Tailscale ou transfert
+  Freebox n’est configuré.
+- PostgreSQL central héberge les bases `overlays` et `overlays_dev` avec des
+  rôles distincts. L’application et ses migrations restent gérées par ce dépôt ;
+  le workflow ne crée ni base ni rôle. L’accès LAN TLS est vérifié depuis pgAdmin.
+  Voir le [runbook PostgreSQL](https://github.com/Necsus/geekom/blob/main/docs/runbooks/postgresql.md)
+  et l’[architecture du dépôt `geekom`](https://github.com/Necsus/geekom/blob/main/docs/architecture.md).
 - `nginx/https/default.conf` est le vhost du Nginx hôte. Il déclare le domaine,
   les chemins du certificat Overlays et l’upstream loopback ; il inclut le
   snippet HTTP-01 commun. Il redirige HTTP vers HTTPS hors challenge et relaie
@@ -63,20 +67,21 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
   `app_egress`, observée à `172.18.0.1`, plutôt qu’un wildcard. Cela permet de
   reconstruire les URL HTTPS et WebSocket derrière la publication Docker.
 - Avant d’arrêter l’application, la CI vérifie cette adresse sur le réseau
-  effectif. Après démarrage, elle contrôle la santé dans le conteneur et sur le
-  port loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
+  effectif. La version locale préparée vérifie aussi l’accès à la base par le
+  rôle applicatif et refuse une base de production sans historique de migrations.
+  Après démarrage, elle contrôle la santé dans le conteneur et sur le port
+  loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
   ni à Certbot ; l’installation/rechargement du vhost reste manuel.
 - Le script distant arrive sur STDIN via `bash -s`. Les commandes applicatives
-  `run` et `exec` sont non interactives, pour préserver le flux du script ; les
-  commandes PostgreSQL reçoivent au contraire leurs heredocs SQL dédiés. Sans
-  cette distinction, une commande ponctuelle peut absorber la suite du script
+  `run` et `exec` sont non interactives, pour préserver le flux du script. Sans
+  cette précaution, une commande ponctuelle peut absorber la suite du script
   et produire un job vert sans démarrer l’application.
 
 Le socle commun gère indépendamment le webroot, les certificats et le
 renouvellement/rechargement. Les workflows réutilisables restent à définir.
-Le moteur de l’hôte a été mis à jour vers Docker CE ; son état est suivi dans
-`geekom`. La publication loopback et son isolation LAN restent à contrôler lors
-du déploiement applicatif. Procédure, limites et validations attendues :
+Le conteneur applicatif sera redéployé après publication des changements locaux
+et vérification des sondes de santé. L’accès HTTPS extérieur, OBS/WebSocket et
+le dry-run Certbot restent à valider. Procédure et détails d’exploitation :
 [DEPLOY.md](DEPLOY.md).
 
 ## Giveaway et échéance

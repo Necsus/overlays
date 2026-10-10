@@ -4,6 +4,7 @@ Apply migrations before starting the application:
     python -m app.infrastructure.database
 """
 
+import argparse
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -113,6 +114,11 @@ class Database:
                     user=settings.psql_user,
                     password=settings.psql_password.get_secret_value(),
                     sslmode=settings.psql_sslmode,
+                    sslrootcert=(
+                        str(settings.psql_sslrootcert)
+                        if settings.psql_sslrootcert is not None
+                        else None
+                    ),
                     connect_timeout=5,
                     application_name="necsusdev-overlays",
                     options=(
@@ -165,6 +171,46 @@ class Database:
                 "Incompatible PostgreSQL schema; run database migrations"
             )
 
+    async def preflight_migration(self) -> None:
+        """Check the production schema without changing it before deployment."""
+        async with (
+            self.transaction() as connection,
+            connection.cursor() as cursor,
+        ):
+            await cursor.execute("SET TRANSACTION READ ONLY")
+            await cursor.execute(
+                "SELECT to_regclass('public.schema_migrations') AS migration_table"
+            )
+            if (await cursor.fetchone())["migration_table"] is None:
+                raise DatabaseError(
+                    "Refusing deployment: target database has no migration history; "
+                    "restore or initialize it explicitly first"
+                )
+
+            await cursor.execute(
+                "SELECT version FROM public.schema_migrations ORDER BY version"
+            )
+            versions = [row["version"] for row in await cursor.fetchall()]
+            if versions not in ([1], list(range(1, SCHEMA_VERSION + 1))):
+                raise DatabaseError(
+                    "Refusing deployment: target database has an unsupported "
+                    "schema version"
+                )
+
+            if versions[-1] == 1:
+                await cursor.execute(
+                    "SELECT to_regclass('public.giveaways') AS giveaways_table"
+                )
+                if (await cursor.fetchone())["giveaways_table"] is not None:
+                    await cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM public.giveaways) AS has_giveaways"
+                    )
+                    if (await cursor.fetchone())["has_giveaways"]:
+                        raise DatabaseError(
+                            "Refusing migration: schema version 1 contains giveaways "
+                            "that migration version 2 deletes"
+                        )
+
     async def migrate(self) -> None:
         async with (
             self.transaction() as connection,
@@ -202,6 +248,14 @@ class Database:
 async def _main() -> None:
     from pydantic import ValidationError
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="check the production migration guard without changing the database",
+    )
+    args = parser.parse_args()
+
     try:
         settings = Settings()  # pyright: ignore[reportCallIssue]
     except ValidationError as error:
@@ -220,11 +274,19 @@ async def _main() -> None:
             "Compare with .env.example; no values are displayed."
         ) from None
 
+    database = Database(settings)
     try:
-        await Database(settings).migrate()
+        if args.preflight:
+            await database.preflight_migration()
+        else:
+            await database.migrate()
     except DatabaseError as error:
-        raise SystemExit(f"Migration failed: {error}") from None
-    print(f"PostgreSQL schema version {SCHEMA_VERSION} ready.")
+        action = "Migration preflight failed" if args.preflight else "Migration failed"
+        raise SystemExit(f"{action}: {error}") from None
+    if args.preflight:
+        print("PostgreSQL migration preflight passed.")
+    else:
+        print(f"PostgreSQL schema version {SCHEMA_VERSION} ready.")
 
 
 if __name__ == "__main__":
