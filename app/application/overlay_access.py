@@ -1,8 +1,11 @@
 import hashlib
+import re
 import secrets
 from typing import cast
 
 GIVEAWAY_PLUGIN_SLUG = "giveaway"
+# 32 random bytes have 43 unpadded base64url characters, with two final padding bits.
+OVERLAY_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
 
 
 def generate_overlay_token() -> str:
@@ -31,7 +34,11 @@ def parse_overlay_authentication(message: object) -> str | None:
     if message_type != "overlay.authenticate":
         return None
 
-    if not isinstance(token, str) or not token:
+    if (
+        not isinstance(token, str)
+        or len(token) != 43
+        or OVERLAY_TOKEN_PATTERN.fullmatch(token) is None
+    ):
         return None
 
     return token

@@ -55,7 +55,7 @@ class GiveawayService:
         self._apply(restored)
         self._needs_reload = False
         self.resume_timer()
-        await self._broadcast_state()
+        self._publish_state()
 
     def _apply(self, engine: GiveawayEngine) -> None:
         self._engine.state = engine.state
@@ -112,7 +112,7 @@ class GiveawayService:
             )
             self._engine.stop()
         self._cancel_timer()
-        await self._broadcast_state()
+        self._publish_state()
 
     async def _draw(self, giveaway_id: str) -> Participant:
         candidate = copy(self._engine)
@@ -135,7 +135,7 @@ class GiveawayService:
                 create_giveaway(self._database, self._streamer_id, candidate.giveaway_id, candidate.lot)
             )
             self._apply(candidate)
-            await self._broadcast_state()
+            self._publish_state()
 
     async def start(self, duration_seconds: int | None = None) -> None:
         if duration_seconds is not None and (
@@ -156,7 +156,7 @@ class GiveawayService:
             self._engine.start()
             self._engine.closes_at = deadline
             self.resume_timer()
-            await self._broadcast_state()
+            self._publish_state()
 
     async def join(self, participant: Participant) -> bool:
         async with self._lock:
@@ -177,7 +177,7 @@ class GiveawayService:
                 await self._ensure_consistent()
                 return False
             self._engine.join(participant)
-            await self._broadcast_state()
+            self._publish_state()
             return True
 
     async def pull(self) -> Participant:
@@ -186,7 +186,7 @@ class GiveawayService:
             giveaway_id = self._active_giveaway_id()
             winner = await self._draw(giveaway_id)
             self._cancel_timer()
-            await self._broadcast_state()
+            self._publish_state()
             return winner
 
     async def stop(self) -> None:
@@ -198,14 +198,14 @@ class GiveawayService:
             )
             self._engine.stop()
             self._cancel_timer()
-            await self._broadcast_state()
+            self._publish_state()
 
     def _active_giveaway_id(self) -> str:
         if self._engine.giveaway_id is None:
             raise RuntimeError("There is no active giveaway")
         return self._engine.giveaway_id
 
-    async def _broadcast_state(self) -> None:
-        await self._overlay_connections.broadcast(
+    def _publish_state(self) -> None:
+        self._overlay_connections.broadcast(
             self._streamer_id, self._engine.overlay_snapshot()
         )

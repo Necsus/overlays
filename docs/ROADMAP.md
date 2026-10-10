@@ -4,16 +4,15 @@ Ce fichier est l’index du travail restant. L’existant est décrit dans
 [l’architecture](ARCHITECTURE.md) ; l’installation et l’usage dans le
 [README](../README.md).
 
-## Chantier actif — déploiement et validations de production
+## Chantier actif — validations post-déploiement
 
-PostgreSQL central et l’accès pgAdmin LAN/TLS sont en service. Le conteneur
-applicatif est arrêté en attente de la publication des changements locaux du
-workflow et du Compose ; voir [DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
+PostgreSQL central est en service et l’application est déployée. Les contrôles
+HTTPS `/health` et `/` renvoient 200 ; voir
+[DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
 
-- Publier les changements du workflow/Compose, redéployer l’application et
-  vérifier migrations, santé et OAuth via le service central.
-- Valider HTTPS depuis l’extérieur, les liens OBS générés, le WebSocket OBS et
-  le renouvellement Certbot avec le vhost TLS.
+- Valider le parcours OAuth Twitch après le renforcement de sa liaison au navigateur.
+- Valider les liens OBS générés, le WebSocket OBS et le renouvellement Certbot
+  avec le vhost TLS.
 - Définir et tester les sauvegardes/restaurations du volume PostgreSQL central.
 - Confirmer l’inaccessibilité du port PostgreSQL depuis Tailscale et Internet.
 - Définir le contrat et les workflows réutilisables communs de `geekom`.

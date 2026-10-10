@@ -11,8 +11,10 @@ from twitchio.exceptions import TwitchioException
 from app.application.oauth_state import (
     OAUTH_STATE_TTL_SECONDS,
     OAuthFlow,
+    OAuthStateLimitError,
     OAuthStateStore,
 )
+from app.application.public_limits import PUBLIC_REQUEST_WINDOW_SECONDS
 from app.application.session import SESSION_COOKIE_NAME, SessionSigner
 from app.core.configuration import ApplicationConfiguration
 from app.core.environment import Settings
@@ -31,6 +33,23 @@ from app.infrastructure.twitch_oauth import (
 LOGGER = logging.getLogger("uvicorn.error")
 
 router = APIRouter()
+
+
+def issue_oauth_state(request: Request, flow: OAuthFlow) -> tuple[str, str]:
+    store = cast(OAuthStateStore, request.app.state.oauth_state_store)
+    # Uvicorn reconstructs the peer only from the configured trusted proxy.
+    client_id = request.client.host if request.client is not None else "unknown"
+    try:
+        return store.issue(flow, client_id)
+    except OAuthStateLimitError:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="OAuth login capacity temporarily exceeded",
+            headers={
+                "Retry-After": str(PUBLIC_REQUEST_WINDOW_SECONDS),
+                "Cache-Control": "no-store",
+            },
+        ) from None
 
 
 def oauth_cookie_secure(request: Request) -> bool:
@@ -78,9 +97,7 @@ def clear_oauth_cookie(request: Request, response: Response, state: str) -> None
 )
 def twitch_login(request: Request) -> RedirectResponse:
     settings = cast(Settings, request.app.state.settings)
-    oauth_state_store = cast(OAuthStateStore, request.app.state.oauth_state_store)
-
-    state, browser_token = oauth_state_store.issue("streamer")
+    state, browser_token = issue_oauth_state(request, "streamer")
     authorization_url = build_authorization_url(
         client_id=settings.twitch_client_id,
         redirect_uri=settings.twitch_admin_redirect_uri,
@@ -103,9 +120,7 @@ def twitch_login(request: Request) -> RedirectResponse:
 )
 def twitch_bot_login(request: Request) -> RedirectResponse:
     settings = cast(Settings, request.app.state.settings)
-    oauth_state_store = cast(OAuthStateStore, request.app.state.oauth_state_store)
-
-    state, browser_token = oauth_state_store.issue("bot")
+    state, browser_token = issue_oauth_state(request, "bot")
     authorization_url = build_authorization_url(
         client_id=settings.twitch_client_id,
         redirect_uri=settings.twitch_admin_redirect_uri,
@@ -245,37 +260,36 @@ async def complete_twitch_callback(
     if oauth_flow == "bot":
         return await complete_bot_authorization(request, authorization)
 
-    database = cast(Database, request.app.state.database)
-    async with database.access_lock:
-        return await complete_streamer_authorization(request, authorization)
+    return await complete_streamer_authorization(request, authorization)
 
 
 async def complete_streamer_authorization(
     request: Request, authorization: TwitchAuthorization
 ) -> RedirectResponse:
     database = cast(Database, request.app.state.database)
-    try:
-        await save_streamer(
-            database,
+    async with database.access_lock:
+        try:
+            await save_streamer(
+                database,
+                twitch_user_id=authorization.twitch_user_id,
+                login=authorization.login,
+                display_name=authorization.display_name,
+                profile_image_url=authorization.profile_image_url,
+            )
+        except DatabaseError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to persist the Twitch identity",
+            ) from None
+
+        streamer = Streamer(
             twitch_user_id=authorization.twitch_user_id,
             login=authorization.login,
             display_name=authorization.display_name,
             profile_image_url=authorization.profile_image_url,
         )
-    except DatabaseError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unable to persist the Twitch identity",
-        ) from None
-
-    streamer = Streamer(
-        twitch_user_id=authorization.twitch_user_id,
-        login=authorization.login,
-        display_name=authorization.display_name,
-        profile_image_url=authorization.profile_image_url,
-    )
-    context_factory = request.app.state.ensure_streamer_context
-    giveaway_command_handler = await context_factory(streamer)
+        context_factory = request.app.state.ensure_streamer_context
+        giveaway_command_handler = await context_factory(streamer)
 
     twitch_bot = cast(
         GiveawayTwitchBot | None,
@@ -286,10 +300,9 @@ async def complete_streamer_authorization(
         try:
             async with asyncio.timeout(10):
                 await twitch_bot.wait_until_ready()
-
-            await twitch_bot.subscribe_to_streamer(
-                authorization, giveaway_command_handler
-            )
+                await twitch_bot.subscribe_to_streamer(
+                    authorization, giveaway_command_handler
+                )
         except (
             TimeoutError,
             TwitchioException,

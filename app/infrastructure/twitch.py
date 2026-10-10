@@ -22,7 +22,7 @@ class GiveawayTwitchBot(commands.AutoBot):
         command_handlers: dict[str, GiveawayCommandHandler],
     ) -> None:
         self._handlers = dict(command_handlers)
-        self._subscription_lock = asyncio.Lock()
+        self._subscription_locks: dict[str, asyncio.Lock] = {}
         self._chat_subscription_ids: dict[str, str] = {}
         super().__init__(
             client_id=settings.twitch_client_id,
@@ -60,16 +60,19 @@ class GiveawayTwitchBot(commands.AutoBot):
         authorization: TwitchAuthorization,
         handler: GiveawayCommandHandler,
     ) -> None:
-        validated_token = await self.add_token(
-            authorization.access_token, authorization.refresh_token
-        )
-        if validated_token.user_id != authorization.twitch_user_id:
-            if validated_token.user_id is not None:
-                _ = await self.remove_token(validated_token.user_id)
-            raise ValueError("The added Twitch token does not match the streamer identity")
-
         streamer_id = authorization.twitch_user_id
-        async with self._subscription_lock:
+        # Reuse one lock per authorized context, not one global network lock.
+        subscription_lock = self._subscription_locks.setdefault(
+            streamer_id, asyncio.Lock()
+        )
+        async with subscription_lock:
+            validated_token = await self.add_token(
+                authorization.access_token, authorization.refresh_token
+            )
+            if validated_token.user_id != streamer_id:
+                if validated_token.user_id is not None:
+                    _ = await self.remove_token(validated_token.user_id)
+                raise ValueError("The added Twitch token does not match the streamer identity")
             self._handlers[streamer_id] = handler
             existing_id = await self._reconcile_chat_subscription(streamer_id)
             if existing_id is not None:

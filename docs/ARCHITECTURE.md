@@ -36,9 +36,9 @@ choisit jamais les gagnants.
 La production utilise Debian, Docker Compose et GitHub Actions, qui construit
 l’image sur les PR et publie/déploie `main` via GHCR et Tailscale SSH. Nginx et
 Certbot sont gérés sur l’hôte par le dépôt `geekom`; le vhost HTTPS Overlays est
-en place. PostgreSQL central est en service, avec accès pgAdmin LAN/TLS validé.
-Le conteneur applicatif est arrêté en attente de la publication et du
-redéploiement des changements locaux du workflow et du Compose.
+en place. L’application est déployée sur PostgreSQL central. Les contrôles HTTPS
+récents renvoient 200 sur `/health` et `/`; OAuth Twitch après le renforcement
+navigateur, OBS/WebSocket et le renouvellement Certbot restent à valider.
 
 ```text
 Internet → IPv4 publique fixe / routeur TCP 80 et 443
@@ -67,11 +67,11 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
   `app_egress`, observée à `172.18.0.1`, plutôt qu’un wildcard. Cela permet de
   reconstruire les URL HTTPS et WebSocket derrière la publication Docker.
 - Avant d’arrêter l’application, la CI vérifie cette adresse sur le réseau
-  effectif. La version locale préparée vérifie aussi l’accès à la base par le
-  rôle applicatif et refuse une base de production sans historique de migrations.
-  Après démarrage, elle contrôle la santé dans le conteneur et sur le port
-  loopback de l’hôte. Elle livre le vhost mais ne touche pas au Nginx hôte
-  ni à Certbot ; l’installation/rechargement du vhost reste manuel.
+  effectif. Le workflow vérifie aussi l’accès à la base par le rôle applicatif
+  et refuse une base de production sans historique de migrations. Après le
+  démarrage, il contrôle la santé dans le conteneur et sur le port loopback de
+  l’hôte. Il livre le vhost mais ne touche pas au Nginx hôte ni à Certbot ;
+  l’installation/rechargement du vhost reste manuel.
 - Le script distant arrive sur STDIN via `bash -s`. Les commandes applicatives
   `run` et `exec` sont non interactives, pour préserver le flux du script. Sans
   cette précaution, une commande ponctuelle peut absorber la suite du script
@@ -79,9 +79,9 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
 
 Le socle commun gère indépendamment le webroot, les certificats et le
 renouvellement/rechargement. Les workflows réutilisables restent à définir.
-Le conteneur applicatif sera redéployé après publication des changements locaux
-et vérification des sondes de santé. L’accès HTTPS extérieur, OBS/WebSocket et
-le dry-run Certbot restent à valider. Procédure et détails d’exploitation :
+Le déploiement centralisé et les sondes de santé sont validés ; les contrôles
+HTTPS `/health` et `/` renvoient 200. OAuth Twitch après renforcement, OBS/WebSocket
+et le dry-run Certbot avec le vhost TLS restent à valider. Procédure et détails :
 [DEPLOY.md](DEPLOY.md).
 
 ## Giveaway et échéance
@@ -195,6 +195,104 @@ avant diffusion ; chaque événement est routé vers son contexte. Sa valeur en 
 Le gestionnaire associe les connexions au streamer et ne sert que Giveaway.
 Les clés OBS sont composées par streamer et plugin ; rotations et diffusions ne
 concernent que le propriétaire correspondant.
+
+## Protection des entrées publiques
+
+Les budgets sont en mémoire **par processus**, pour le déploiement mono-worker
+actuel. Ils ne sont pas partagés entre plusieurs workers ou instances. Les
+limites initiales sont définies dans `app/application/oauth_state.py` et
+`app/web/websocket.py`, avec un compteur commun dans
+`app/application/public_limits.py` ; aucune variable d'environnement supplémentaire
+n'est nécessaire.
+
+| Ressource | Limite initiale |
+| --- | --- |
+| Transactions OAuth en attente, bot et streamer réunis | 512 |
+| Créations de transactions OAuth | 60 par fenêtre, dont 10 par IP |
+| Authentifications OBS simultanées | 32, dont 8 par IP |
+| Tentatives de connexion OBS | 120 par fenêtre, dont 30 par IP |
+| Connexions OBS authentifiées | 256 au total, dont 8 par streamer |
+
+Les fenêtres de débit sont fixes, de 60 secondes, et autorisent un nouveau
+budget à leur renouvellement : ce n'est pas une fenêtre glissante. Les compteurs
+ne conservent que les IP admises et leur nombre est borné par le budget global.
+Les IP viennent de `request.client` / `websocket.client`, reconstruits par
+Uvicorn selon la confiance proxy prévue ; les en-têtes clients ne sont pas lus
+directement. L'absence d'IP utilise un groupe commun `unknown`. Une IP partagée
+(NAT) partage les quotas ; des clients distribués peuvent encore épuiser le
+budget global. La confiance proxy effective et les seuils restent à valider.
+
+OAuth refuse une nouvelle transaction avec HTTP `429`, `Retry-After: 60` et
+`Cache-Control: no-store`, sans ajouter de cookie ni évincer un state existant.
+Les callbacks déjà émis restent consommables malgré cette saturation. La purge
+s'appuie sur l'ordre d'expiration, sans parcourir systématiquement les states
+encore valides.
+
+OBS réserve une place avant acceptation. Le premier message texte est limité à
+512 caractères avant décodage JSON ; le token doit être l'encodage base64url
+canonique de 32 octets (43 caractères), sinon aucun accès SQL n'est effectué.
+Le délai total de cinq secondes couvre acceptation, réception, attente du verrou
+et recherche SQL. La libération des places est garantie par `finally`, y compris
+sur erreur ou annulation. Les fermetures des authentifications refusées se font
+hors verrou d'accès avec le budget commun décrit dans la section suivante.
+
+Une saturation OBS demande une fermeture `1013` après acceptation ; avant
+acceptation, Starlette/Uvicorn renvoient normalement un refus HTTP `403`, à
+confirmer avec le transport réel. Un message applicatif envoyé après
+l'authentification ferme la connexion avec `1008` : OBS est en lecture seule,
+les ping/pong du protocole WebSocket restent gérés par le transport.
+
+La limite de 512 caractères intervient **après assemblage du message par ASGI**.
+Elle ne réduit pas à elle seule les buffers de trames du serveur ni les connexions
+réseau en amont. La validation transport, SQL réel et reconnexion multi-source
+reste dans [WIS-0002](security/WIS-0002-public-resource-limits.md), sans test
+réalisé sur la production ni modification du proxy dans cette étape.
+
+## Diffusion et verrous réseau
+
+Le service capture un instantané détaché du moteur après validation SQL, sous
+son verrou métier, puis le publie **sans attente réseau**. Le gestionnaire possède
+un émetteur asynchrone par socket enregistré et une file de capacité un. Quand
+elle est pleine, l'état en attente est remplacé par le dernier instantané validé.
+Les états intermédiaires peuvent être sautés ; les états effectivement envoyés
+restent ordonnés et contiennent toujours l'état complet, dont les gagnants
+ordonnés. L'état initial passe par ce même émetteur : aucun second écrivain ne
+peut le livrer après une diffusion plus récente.
+
+Chaque envoi dispose d'une seconde. Un client lent ou défaillant est retiré du
+registre avant une fermeture `1013`. Les fermetures disposent également d'une
+seconde et s'exécutent en parallèle pour un lot de sockets, hors des verrous
+métier/d'accès. Le plafond global compte les émetteurs jusqu'à leur terminaison,
+y compris pendant leur nettoyage, pour éviter une accumulation de tâches.
+Chaque émetteur retient au plus un état courant et un état en attente ; cette
+borne porte sur le nombre d'instantanés, pas leur taille en octets. Le lifespan
+arrête les minuteurs puis annule et collecte les émetteurs à la fermeture.
+
+Une rotation conserve le verrou d'accès pendant le changement SQL de clé et
+le détachement synchrone des sockets concernés, qui supprime leurs files et
+annule leurs émetteurs. Elle ferme ensuite uniquement les transports capturés,
+hors verrou ; une nouvelle connexion du propriétaire n'est pas incluse dans
+cette liste. Le détachement a lieu même si le commit échoue ou est annulé,
+puisque son résultat peut être incertain. La vérification et l'enregistrement
+OBS restent sous ce même verrou : une ancienne clé ne passe pas une rotation
+réussie. Les données déjà confiées aux buffers réseau ne peuvent pas être
+rappelées ; l'annulation empêche de poursuivre les publications applicatives.
+
+OAuth garde la persistance de l'identité et la création/réutilisation du contexte
+sous le verrou d'accès, mais attend Twitch **après sa libération**. La phase
+`wait_until_ready` + abonnement, y compris validation du token et réconciliation,
+partage un budget de dix secondes ; ce n'est pas un délai total pour tout OAuth.
+Un timeout n'empêche pas la session administrative ; sans abonnement connu prêt,
+le chat reste dégradé. Les abonnements utilisent un verrou par identifiant de
+streamer, réutilisé pour son contexte, plutôt qu'un verrou réseau commun à toutes
+les chaînes. Les opérations d'un même streamer restent sérialisées, sans retenir
+celles d'un autre.
+
+Ces délais reposent sur l'annulation coopérative du transport. Leur efficacité
+réelle, les reconnexions OBS et le comportement TwitchIO restent à confirmer dans
+[WIS-0003](security/WIS-0003-network-under-locks.md). Les attentes SQL nécessaires
+à la cohérence restent sous les verrous ; aucune modification du proxy, des
+migrations ou du déploiement n'accompagne ce correctif.
 
 ## Routes et protocole OBS
 
