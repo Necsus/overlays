@@ -4,27 +4,19 @@ Ce fichier est l’index du travail restant. L’existant est décrit dans
 [l’architecture](ARCHITECTURE.md) ; l’installation et l’usage dans le
 [README](../README.md).
 
-## Chantier actif — accès Internet / CI-CD
+## Chantier actif — déploiement et validations de production
 
-Le socle commun Nginx/Certbot est en place ; son état est suivi dans `geekom`.
-Le raccordement applicatif au Nginx hôte est préparé, **non déployé et non validé**.
-La procédure et les critères restent dans
-[DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
+PostgreSQL central et l’accès pgAdmin LAN/TLS sont en service. Le conteneur
+applicatif est arrêté en attente de la publication des changements locaux du
+workflow et du Compose ; voir [DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
 
-- Déployer le correctif stdin préparé et vérifier la présence durable du service
-  applicatif ainsi que l’exécution des deux contrôles de santé. Le mode interactif
-  de Compose absorbait la suite du script SSH malgré un job vert.
-- Déployer l’adaptation Compose/CI autorisée, valider la publication loopback et
-  la confiance proxy, puis installer le vhost du Nginx hôte.
-- Contrôler l’isolation LAN du port loopback après déploiement ; le moteur a été
-  mis à jour, mais la publication réelle reste à valider. Voir les
-  [limites](DEPLOY.md#limites-de-lautomatisation).
-- Valider HTTPS extérieur, les liens HTTPS générés, OAuth Twitch et OBS.
-- Revalider le renouvellement/rechargement avec le vhost TLS en place.
-- Définir ensuite le contrat et les workflows réutilisables communs de `geekom`.
-
-L’accès PostgreSQL depuis le poste de développement est un sujet réseau
-séparé ; voir les [limites réseau](DEPLOY.md#4-données-réseau-et-limites).
+- Publier les changements du workflow/Compose, redéployer l’application et
+  vérifier migrations, santé et OAuth via le service central.
+- Valider HTTPS depuis l’extérieur, les liens OBS générés, le WebSocket OBS et
+  le renouvellement Certbot avec le vhost TLS.
+- Définir et tester les sauvegardes/restaurations du volume PostgreSQL central.
+- Confirmer l’inaccessibilité du port PostgreSQL depuis Tailscale et Internet.
+- Définir le contrat et les workflows réutilisables communs de `geekom`.
 
 ## Priorités et dossiers ADR
 
