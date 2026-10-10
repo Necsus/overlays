@@ -127,10 +127,45 @@ et [tokens](https://github.com/PythonistaGuild/TwitchIO/blob/v3.3.2/twitchio/aut
 complète ces simulations de concurrence ; elle n'exécute ni le client réel ni
 l'écriture de son fichier d'authentification.
 
-FastAPI/Starlette/TwitchIO/Psycopg sont absents du Python local : aucune intégration
-ASGI/PostgreSQL, navigateur, OBS ou Twitch réelle exécutée. Les LSP Python
-`ty`/`ruff` sont indisponibles ; les installer ou corriger leurs commandes dans
-`pi-lsp.json` pour obtenir des diagnostics. Aucun outil installé.
+Ces premiers contrôles utilisaient le Python système, sans
+FastAPI/Starlette/TwitchIO/Psycopg. Le `.venv` existant a ensuite permis les
+contrôles ASGI complémentaires ci-dessous, sans installer d'outil. PostgreSQL,
+navigateur, OBS et Twitch réels restent non testés. Les LSP Python `ty`/`ruff`
+sont indisponibles ; les installer ou corriger leurs commandes dans
+`pi-lsp.json` pour obtenir des diagnostics.
+
+## Complément P2 — Résilience du login face à EventSub
+
+La revue après merge a reproduit un HTTP `500` du callback lorsqu'un échec
+contrôlé d'abonnement levait un `RuntimeError`, non géré par la route OAuth.
+Ce défaut était préexistant au merge, pas une régression de sa résolution.
+
+Correctif dans `app/infrastructure/twitch.py` et `app/web/routes/auth.py` :
+`TwitchSubscriptionError` distingue les échecs contrôlés des bugs inattendus.
+Le conduit absent, l'abonnement non confirmé et les réponses invalides produisent
+cette erreur ; les données et l'identifiant de souscription sont validés avant
+enregistrement. Le callback la traite avec les autres erreurs Twitch déjà
+récupérables. La politique de session/chat est décrite dans
+[l'architecture](../ARCHITECTURE.md#diffusion-et-verrous-réseau).
+
+**76 contrôles ponctuels ont réussi** avec FastAPI/Starlette réels dans le `.venv`,
+transport ASGI en mémoire et fonctions SQL/Twitch remplacées par des fixtures :
+
+- Treize cas d'échec contrôlé : conduit absent, nombre de succès incorrect,
+  données absentes/nulles/de mauvais type et identifiant absent/vide/non textuel.
+- Redirection `303`, signature de session valide, conservation des deux
+  `Set-Cookie` (session et suppression de la liaison OAuth), statut administratif
+  `chat=degraded`, verrous libérés et abonnement de B inchangé dans chaque cas.
+- Abonnement réussi et réconciliation conservés, sans double création ; timeout
+  et bot désactivé toujours compatibles avec la session administrative.
+- Les `RuntimeError` inattendus restent visibles ; erreur SQL toujours fatale
+  sans nouvelle session, et annulation toujours propagée.
+- Journaux limités à l'identité et à la classe d'erreur, sans payload ni token.
+
+Accès aux fichiers secrets et connexions réseau interdits par une garde pendant
+ces contrôles ; aucun test/script persistant, dépendance ou déploiement ajouté.
+Le démarrage complet du lifespan, le pilote PostgreSQL et le transport OBS/Twitch
+réels ne sont pas couverts. Le WIS reste ouvert pour les critères suivants.
 
 ## Critères de clôture restants — non exécutés
 

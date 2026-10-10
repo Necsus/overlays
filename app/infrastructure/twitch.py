@@ -14,6 +14,10 @@ LOGGER = logging.getLogger("uvicorn.error")
 BOT_SCOPES = authentication.Scopes(BOT_SCOPE_NAMES)
 
 
+class TwitchSubscriptionError(RuntimeError):
+    """A controlled EventSub failure that must not prevent administrative login."""
+
+
 class GiveawayTwitchBot(commands.AutoBot):
     def __init__(
         self,
@@ -86,11 +90,18 @@ class GiveawayTwitchBot(commands.AutoBot):
                 stop_on_error=True,
             )
             if len(result.success) != 1:
-                raise RuntimeError("Twitch did not create the chat subscription")
-            response_data = result.success[0].response["data"]
-            if len(response_data) != 1 or not response_data[0]["id"]:
-                raise RuntimeError("Twitch returned an invalid subscription response")
-            self._chat_subscription_ids[streamer_id] = response_data[0]["id"]
+                raise TwitchSubscriptionError("Twitch did not create the chat subscription")
+            response_data = result.success[0].response.get("data")
+            if (
+                not isinstance(response_data, list)
+                or len(response_data) != 1
+                or not isinstance(response_data[0], dict)
+            ):
+                raise TwitchSubscriptionError("Twitch returned an invalid subscription response")
+            subscription_id = response_data[0].get("id")
+            if not isinstance(subscription_id, str) or not subscription_id.strip():
+                raise TwitchSubscriptionError("Twitch returned an invalid subscription response")
+            self._chat_subscription_ids[streamer_id] = subscription_id
 
     @override
     async def event_subscription_revoked(self, payload: object) -> None:
@@ -127,7 +138,7 @@ class GiveawayTwitchBot(commands.AutoBot):
     async def _reconcile_chat_subscription(self, broadcaster_id: str) -> str | None:
         conduit = self.conduit_info.conduit
         if conduit is None:
-            raise RuntimeError("No Twitch conduit is available")
+            raise TwitchSubscriptionError("No Twitch conduit is available")
         result = await self.fetch_eventsub_subscriptions(conduit_id=conduit.id)
         matching_id: str | None = None
         stale_ids: list[str] = []

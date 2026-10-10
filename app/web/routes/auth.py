@@ -21,7 +21,7 @@ from app.core.environment import Settings
 from app.infrastructure.database import Database, DatabaseError
 from app.domain.streamer import Streamer
 from app.infrastructure.streamers import save_streamer
-from app.infrastructure.twitch import GiveawayTwitchBot
+from app.infrastructure.twitch import GiveawayTwitchBot, TwitchSubscriptionError
 from app.infrastructure.twitch_oauth import (
     BOT_SCOPE_NAMES,
     STREAMER_SCOPE_NAMES,
@@ -305,6 +305,7 @@ async def complete_streamer_authorization(
                 )
         except (
             TimeoutError,
+            TwitchSubscriptionError,
             TwitchioException,
             aiohttp.ClientError,
             ValueError,

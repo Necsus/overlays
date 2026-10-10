@@ -282,8 +282,11 @@ OAuth garde la persistance de l'identité et la création/réutilisation du cont
 sous le verrou d'accès, mais attend Twitch **après sa libération**. La phase
 `wait_until_ready` + abonnement, y compris validation du token et réconciliation,
 partage un budget de dix secondes ; ce n'est pas un délai total pour tout OAuth.
-Un timeout n'empêche pas la session administrative ; sans abonnement connu prêt,
-le chat reste dégradé. Les abonnements utilisent un verrou par identifiant de
+Un timeout ou un échec contrôlé EventSub (conduit absent, abonnement non confirmé,
+réponse invalide) n'empêche pas la session administrative ; sans abonnement connu
+prêt, le chat reste dégradé. Ces échecs utilisent `TwitchSubscriptionError`, sans
+absorber les bugs inattendus ni les erreurs de persistance de l'identité.
+Les abonnements utilisent un verrou par identifiant de
 streamer, réutilisé pour son contexte, plutôt qu'un verrou réseau commun à toutes
 les chaînes. Les opérations d'un même streamer restent sérialisées, sans retenir
 celles d'un autre.
