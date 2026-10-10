@@ -1,35 +1,4 @@
 services:
-  db:
-    image: postgres:18.6-trixie
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
-      # Paramètres utilisés par le bootstrap idempotent des rôles et bases.
-      OVERLAYS_RELEASE_DB: ${PSQL_DB:?Set PSQL_DB in .env}
-      OVERLAYS_RELEASE_USER: ${PSQL_USER:?Set PSQL_USER in .env}
-      OVERLAYS_RELEASE_PASSWORD: ${PSQL_PASSWORD:?Set PSQL_PASSWORD in .env}
-      OVERLAYS_DEV_DB: ${PSQL_DEV_DB:-overlays_dev}
-      OVERLAYS_DEV_USER: ${PSQL_DEV_USER:-overlays_dev}
-      OVERLAYS_DEV_PASSWORD: ${PSQL_DEV_PASSWORD:?Set PSQL_DEV_PASSWORD in .env}
-    # Remplacer 192.168.1.112 si l'adresse LAN réservée du Geekom change ;
-    # ne jamais utiliser 0.0.0.0 ou :: pour PostgreSQL.
-    ports:
-      - "192.168.1.112:5432:5432"
-      # Dans le .env du Geekom, TAILSCALE_IPV4 doit être la sortie de `tailscale ip -4`.
-      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   app:
     image: ghcr.io/necsus/overlays:${OVERLAYS_IMAGE_TAG:?Set OVERLAYS_IMAGE_TAG in .env}
     restart: unless-stopped
@@ -48,7 +17,7 @@ services:
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-28800}
       TWITCH_COMMAND_PREFIX: ${TWITCH_COMMAND_PREFIX:-!}
-      PSQL_HOST: db
+      PSQL_HOST: postgres
       PSQL_PORT: "5432"
       PSQL_DB: ${PSQL_DB:?Set PSQL_DB in .env}
       PSQL_USER: ${PSQL_USER:?Set PSQL_USER in .env}
@@ -59,11 +28,8 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - overlays_runtime:/var/lib/overlays
-    depends_on:
-      db:
-        condition: service_healthy
     networks:
-      - backend
+      - postgres
       - app_egress
     read_only: true
     tmpfs:
@@ -72,10 +38,10 @@ services:
       - no-new-privileges:true
 
 volumes:
-  postgres_data:
   overlays_runtime:
 
 networks:
-  backend:
-    internal: true
+  postgres:
+    external: true
+    name: geekom_postgres_clients
   app_egress:

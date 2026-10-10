@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     psql_sslmode: Literal[
         "disable", "allow", "prefer", "require", "verify-ca", "verify-full"
     ] = "prefer"
+    psql_sslrootcert: Path | None = None
 
     @field_validator("psql_host", "psql_db", "psql_user")
     @classmethod

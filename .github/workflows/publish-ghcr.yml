@@ -75,12 +75,6 @@ jobs:
           PSQL_DB: ${{ vars.PSQL_DB || secrets.PSQL_DB }}
           PSQL_USER: ${{ vars.PSQL_USER || secrets.PSQL_USER }}
           PSQL_PASSWORD: ${{ secrets.PSQL_PASSWORD }}
-          PSQL_DEV_DB: ${{ vars.PSQL_DEV_DB || secrets.PSQL_DEV_DB }}
-          PSQL_DEV_USER: ${{ vars.PSQL_DEV_USER || secrets.PSQL_DEV_USER }}
-          PSQL_DEV_PASSWORD: ${{ secrets.PSQL_DEV_PASSWORD }}
-          POSTGRES_ADMIN_USER: ${{ vars.POSTGRES_ADMIN_USER || secrets.POSTGRES_ADMIN_USER }}
-          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
-          TAILSCALE_IPV4: ${{ vars.GEEKOM_TAILSCALE_HOST }}
           OVERLAYS_IMAGE_TAG: sha-${{ github.sha }}
         shell: bash
         run: |
@@ -92,8 +86,7 @@ jobs:
             TWITCH_ENABLED TWITCH_CLIENT_ID TWITCH_CLIENT_SECRET TWITCH_BOT_ID TWITCH_OWNER_ID
             TWITCH_BOT_LOGIN TWITCH_ADMIN_REDIRECT_URI SESSION_SECRET
             SESSION_COOKIE_SECURE SESSION_MAX_AGE_SECONDS TWITCH_COMMAND_PREFIX
-            PSQL_DB PSQL_USER PSQL_PASSWORD PSQL_DEV_DB PSQL_DEV_USER
-            PSQL_DEV_PASSWORD POSTGRES_ADMIN_USER POSTGRES_ADMIN_PASSWORD
+            PSQL_DB PSQL_USER PSQL_PASSWORD
           )
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
@@ -136,28 +129,12 @@ jobs:
             echo "::error::SESSION_MAX_AGE_SECONDS must be a positive integer"
             exit 1
           fi
-          if [[ "$PSQL_DB" == "$PSQL_DEV_DB" \
-            || "$PSQL_DB" == postgres \
-            || "$PSQL_DB" == template0 \
-            || "$PSQL_DB" == template1 \
-            || "$PSQL_DEV_DB" == postgres \
-            || "$PSQL_DEV_DB" == template0 \
-            || "$PSQL_DEV_DB" == template1 ]]; then
-            echo "::error::Release and development database names must be distinct from each other and PostgreSQL system databases"
+          if [[ "$PSQL_DB" == postgres || "$PSQL_DB" == template0 || "$PSQL_DB" == template1 ]]; then
+            echo "::error::PSQL_DB must not be a PostgreSQL system database"
             exit 1
           fi
-          if [[ "$PSQL_USER" == "$PSQL_DEV_USER" \
-            || "$PSQL_USER" == "$POSTGRES_ADMIN_USER" \
-            || "$PSQL_DEV_USER" == "$POSTGRES_ADMIN_USER" \
-            || "$PSQL_USER" == postgres \
-            || "$PSQL_DEV_USER" == postgres \
-            || "$PSQL_USER" == pg_* \
-            || "$PSQL_DEV_USER" == pg_* ]]; then
-            echo "::error::Release, development, and administrator roles must be distinct and avoid PostgreSQL system roles"
-            exit 1
-          fi
-          if [[ "$PSQL_PASSWORD" == "$PSQL_DEV_PASSWORD" || "$PSQL_PASSWORD" == "$POSTGRES_ADMIN_PASSWORD" || "$PSQL_DEV_PASSWORD" == "$POSTGRES_ADMIN_PASSWORD" ]]; then
-            echo "::error::Use distinct secrets for the PostgreSQL administrator, release, and development roles"
+          if [[ "$PSQL_USER" == postgres || "$PSQL_USER" == pg_* ]]; then
+            echo "::error::PSQL_USER must not be a PostgreSQL system role"
             exit 1
           fi
 
@@ -193,12 +170,6 @@ jobs:
               "PSQL_DB",
               "PSQL_USER",
               "PSQL_PASSWORD",
-              "PSQL_DEV_DB",
-              "PSQL_DEV_USER",
-              "PSQL_DEV_PASSWORD",
-              "POSTGRES_ADMIN_USER",
-              "POSTGRES_ADMIN_PASSWORD",
-              "TAILSCALE_IPV4",
               "OVERLAYS_IMAGE_TAG",
               "OVERLAYS_PROXY_IP",
           )
@@ -286,7 +257,7 @@ jobs:
           scp -B "${ssh_options[@]}" -o ConnectTimeout=20 "$DOCKER_CONFIG_DIR/config.json" \
             "$target:$remote_stage/docker-config.json"
 
-      - name: Bootstrap database, migrate, and deploy
+      - name: Preflight, migrate, and deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -317,97 +288,25 @@ jobs:
 
           cd "$app_dir"
           export DOCKER_CONFIG="$stage/docker"
+          project_name=$(basename -- "$app_dir")
+          export COMPOSE_PROJECT_NAME="$project_name"
           docker compose config --quiet
           if ! command -v python3 >/dev/null; then
             echo "::error::Host Python 3 is required for the loopback health check (provided by Debian Certbot)."
             exit 1
           fi
-          docker compose up -d --wait db
-
-          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-          \set ON_ERROR_STOP on
-          \o /dev/null
-          \getenv release_db OVERLAYS_RELEASE_DB
-          \getenv release_user OVERLAYS_RELEASE_USER
-          \getenv release_password OVERLAYS_RELEASE_PASSWORD
-          \getenv dev_db OVERLAYS_DEV_DB
-          \getenv dev_user OVERLAYS_DEV_USER
-          \getenv dev_password OVERLAYS_DEV_PASSWORD
-
-          SELECT format(
-              'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
-              :'release_user', :'release_password'
-          )
-          WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'release_user')
-          \gexec
-          SELECT format('CREATE DATABASE %I OWNER %I', :'release_db', :'release_user')
-          WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'release_db')
-          \gexec
-          SELECT format(
-              'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
-              :'dev_user', :'dev_password'
-          )
-          WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')
-          \gexec
-          SELECT format('CREATE DATABASE %I OWNER %I', :'dev_db', :'dev_user')
-          WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'dev_db')
-          \gexec
-          SQL
-
-          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$OVERLAYS_RELEASE_DB"' <<'PREFLIGHT'
-          \set ON_ERROR_STOP on
-          \o /dev/null
-          DO $migration_guard$
-          DECLARE
-              schema_version integer;
-              has_giveaways boolean;
-          BEGIN
-              IF to_regclass('public.schema_migrations') IS NOT NULL THEN
-                  SELECT MAX(version) INTO schema_version FROM public.schema_migrations;
-                  IF schema_version = 1 AND to_regclass('public.giveaways') IS NOT NULL THEN
-                      EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.giveaways)' INTO has_giveaways;
-                      IF has_giveaways THEN
-                          RAISE EXCEPTION 'Refusing migration: schema version 1 contains giveaways that migration version 2 deletes';
-                      END IF;
-                  END IF;
-              END IF;
-          END
-          $migration_guard$;
-          PREFLIGHT
-
           docker compose pull app
+          docker compose run --interactive=false --rm --no-deps app \
+            python -m app.infrastructure.database --preflight
           # Create app_egress without starting the web server or bot; check before downtime.
           # bash -s owns STDIN: app commands must not consume the remaining deployment script.
           docker compose run --interactive=false --rm --no-deps app python -c 'pass'
-          project_name=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$(docker compose ps -q db)")
           proxy_gateways=$(docker network inspect "${project_name}_app_egress" --format '{{range .IPAM.Config}}{{println .Gateway}}{{end}}')
           if ! grep -Fxq -- "$proxy_ip" <<<"$proxy_gateways"; then
             echo "::error::Docker app_egress gateway does not match OVERLAYS_PROXY_IP; check the network and update this non-secret GitHub variable."
             exit 1
           fi
           docker compose stop app >/dev/null 2>&1 || true
-          docker compose exec -T db sh -ec 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'CREDENTIALS'
-          \set ON_ERROR_STOP on
-          \o /dev/null
-          \getenv admin_user POSTGRES_USER
-          \getenv admin_password POSTGRES_PASSWORD
-          \getenv release_db OVERLAYS_RELEASE_DB
-          \getenv release_user OVERLAYS_RELEASE_USER
-          \getenv release_password OVERLAYS_RELEASE_PASSWORD
-          \getenv dev_db OVERLAYS_DEV_DB
-          \getenv dev_user OVERLAYS_DEV_USER
-          \getenv dev_password OVERLAYS_DEV_PASSWORD
-          SELECT format('ALTER ROLE %I WITH PASSWORD %L', :'admin_user', :'admin_password')
-          \gexec
-          SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'release_user', :'release_password')
-          \gexec
-          SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'dev_user', :'dev_password')
-          \gexec
-          SELECT format('ALTER DATABASE %I OWNER TO %I', :'release_db', :'release_user')
-          \gexec
-          SELECT format('ALTER DATABASE %I OWNER TO %I', :'dev_db', :'dev_user')
-          \gexec
-          CREDENTIALS
           docker compose run --interactive=false --rm --no-deps app python -m app.infrastructure.database
           docker compose run --interactive=false --rm --no-deps app python -c '
           from app.core.configuration import configuration_from_settings
