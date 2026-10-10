@@ -14,6 +14,10 @@ LOGGER = logging.getLogger("uvicorn.error")
 BOT_SCOPES = authentication.Scopes(BOT_SCOPE_NAMES)
 
 
+class TwitchSubscriptionError(RuntimeError):
+    """A controlled EventSub failure that must not prevent administrative login."""
+
+
 class GiveawayTwitchBot(commands.AutoBot):
     def __init__(
         self,
@@ -22,7 +26,7 @@ class GiveawayTwitchBot(commands.AutoBot):
         command_handlers: dict[str, GiveawayCommandHandler],
     ) -> None:
         self._handlers = dict(command_handlers)
-        self._subscription_lock = asyncio.Lock()
+        self._subscription_locks: dict[str, asyncio.Lock] = {}
         self._chat_subscription_ids: dict[str, str] = {}
         super().__init__(
             client_id=settings.twitch_client_id,
@@ -60,16 +64,19 @@ class GiveawayTwitchBot(commands.AutoBot):
         authorization: TwitchAuthorization,
         handler: GiveawayCommandHandler,
     ) -> None:
-        validated_token = await self.add_token(
-            authorization.access_token, authorization.refresh_token
-        )
-        if validated_token.user_id != authorization.twitch_user_id:
-            if validated_token.user_id is not None:
-                _ = await self.remove_token(validated_token.user_id)
-            raise ValueError("The added Twitch token does not match the streamer identity")
-
         streamer_id = authorization.twitch_user_id
-        async with self._subscription_lock:
+        # Reuse one lock per authorized context, not one global network lock.
+        subscription_lock = self._subscription_locks.setdefault(
+            streamer_id, asyncio.Lock()
+        )
+        async with subscription_lock:
+            validated_token = await self.add_token(
+                authorization.access_token, authorization.refresh_token
+            )
+            if validated_token.user_id != streamer_id:
+                if validated_token.user_id is not None:
+                    _ = await self.remove_token(validated_token.user_id)
+                raise ValueError("The added Twitch token does not match the streamer identity")
             self._handlers[streamer_id] = handler
             existing_id = await self._reconcile_chat_subscription(streamer_id)
             if existing_id is not None:
@@ -83,11 +90,18 @@ class GiveawayTwitchBot(commands.AutoBot):
                 stop_on_error=True,
             )
             if len(result.success) != 1:
-                raise RuntimeError("Twitch did not create the chat subscription")
-            response_data = result.success[0].response["data"]
-            if len(response_data) != 1 or not response_data[0]["id"]:
-                raise RuntimeError("Twitch returned an invalid subscription response")
-            self._chat_subscription_ids[streamer_id] = response_data[0]["id"]
+                raise TwitchSubscriptionError("Twitch did not create the chat subscription")
+            response_data = result.success[0].response.get("data")
+            if (
+                not isinstance(response_data, list)
+                or len(response_data) != 1
+                or not isinstance(response_data[0], dict)
+            ):
+                raise TwitchSubscriptionError("Twitch returned an invalid subscription response")
+            subscription_id = response_data[0].get("id")
+            if not isinstance(subscription_id, str) or not subscription_id.strip():
+                raise TwitchSubscriptionError("Twitch returned an invalid subscription response")
+            self._chat_subscription_ids[streamer_id] = subscription_id
 
     @override
     async def event_subscription_revoked(self, payload: object) -> None:
@@ -124,7 +138,7 @@ class GiveawayTwitchBot(commands.AutoBot):
     async def _reconcile_chat_subscription(self, broadcaster_id: str) -> str | None:
         conduit = self.conduit_info.conduit
         if conduit is None:
-            raise RuntimeError("No Twitch conduit is available")
+            raise TwitchSubscriptionError("No Twitch conduit is available")
         result = await self.fetch_eventsub_subscriptions(conduit_id=conduit.id)
         matching_id: str | None = None
         stale_ids: list[str] = []

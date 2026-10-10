@@ -32,10 +32,10 @@ Ordre proposé, à ajuster aux mesures :
    linéaires.
 3. Valider sous charge la cohérence mémoire/base et l'accès SQL asynchrone déjà
    implémenté ; mesurer le coût d'une connexion et d'un commit par inscription.
-4. Sortir les diffusions du verrou sans inverser l'ordre des états ; utiliser
-   des files bornées et conserver le dernier état du giveaway.
-5. Borner les délais d'envoi, déconnecter les clients lents, limiter les
-   connexions et les messages entrants.
+4. Valider sous charge la publication hors attente réseau et les files bornées
+   du dernier état, désormais [implémentées](../ARCHITECTURE.md#diffusion-et-verrous-réseau).
+5. Valider les budgets d'envoi/fermeture et l'éviction des clients lents, ainsi
+   que les [quotas et limites de messages implémentés](../ARCHITECTURE.md#protection-des-entrées-publiques).
 6. Superviser TwitchIO, ajouter `live`/`ready` et une reconnexion progressive
    avec jitter.
 

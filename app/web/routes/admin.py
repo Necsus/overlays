@@ -77,16 +77,21 @@ async def rotate_giveaway_overlay_access(
     token = generate_overlay_token()
     database = cast(Database, request.app.state.database)
     overlay_connections = cast(OverlayConnectionManager, request.app.state.overlay_connections)
-    async with database.access_lock:
-        try:
-            rotated_at = await rotate_overlay_access_key(
-                database, streamer_id=identity.twitch_user_id,
-                plugin_slug=GIVEAWAY_PLUGIN_SLUG, token_hash=hash_overlay_token(token),
-            )
-        except DatabaseError:
-            await overlay_connections.disconnect_streamer(identity.twitch_user_id)
-            raise HTTPException(status_code=500, detail="Unable to rotate the overlay access key") from None
-        await overlay_connections.disconnect_streamer(identity.twitch_user_id)
+    detached = []
+    try:
+        async with database.access_lock:
+            try:
+                rotated_at = await rotate_overlay_access_key(
+                    database, streamer_id=identity.twitch_user_id,
+                    plugin_slug=GIVEAWAY_PLUGIN_SLUG, token_hash=hash_overlay_token(token),
+                )
+            finally:
+                # A cancelled/failed COMMIT may still have changed the key.
+                detached = overlay_connections.detach_streamer(identity.twitch_user_id)
+    except DatabaseError:
+        raise HTTPException(status_code=500, detail="Unable to rotate the overlay access key") from None
+    finally:
+        await overlay_connections.close_connections(detached)
     response.headers["Cache-Control"] = "no-store"
     return {"overlay_url": f"{str(request.base_url).rstrip('/')}/plugins/giveaway/overlay#{token}",
             "rotated_at": rotated_at}

@@ -22,7 +22,7 @@ Pour le développement, `PSQL_DB` et `PSQL_USER`/`PSQL_PASSWORD` doivent désign
 
 Un push sur `main` publie une image taguée par commit sur GHCR, puis la déploie sur le Geekom via GitHub Actions, Tailscale et Tailscale SSH. Les PR vers `main` construisent l’image sans la publier.
 
-Le Nginx/Certbot commun et le vhost HTTPS Overlays sont en place. PostgreSQL central et l’accès pgAdmin depuis le Mac via TLS sont en service. Les changements locaux du workflow et du Compose connectent l’application à cette instance sans provisionner PostgreSQL ; ils attendent publication et déploiement. L’application est actuellement arrêtée. Après le déploiement, valider `/health`, `/admin`, OAuth Twitch, OBS/WebSocket et l’accès HTTPS depuis l’extérieur. Voir [docs/DEPLOY.md](docs/DEPLOY.md), la [roadmap](docs/ROADMAP.md) et l’architecture du dépôt [geekom](https://github.com/Necsus/geekom/blob/main/docs/architecture.md).
+Le Nginx/Certbot commun et le vhost HTTPS Overlays sont en place. L’application est déployée sur PostgreSQL central ; le précontrôle, les migrations et les sondes de santé du workflow ont réussi. Les contrôles HTTPS récents renvoient 200 sur `/health` et `/`. Le parcours OAuth après le renforcement de sa liaison au navigateur, OBS/WebSocket et le renouvellement Certbot restent à valider. Voir [docs/DEPLOY.md](docs/DEPLOY.md), la [roadmap](docs/ROADMAP.md) et l’architecture du dépôt [geekom](https://github.com/Necsus/geekom/blob/main/docs/architecture.md).
 
 Les données d’exécution persistent dans le volume `overlays_overlays_runtime`. Le schéma de la base centrale `overlays` est en version 2.
 

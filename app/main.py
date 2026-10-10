@@ -103,6 +103,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             for service in list(services.values()):
                 await service.close()
 
+        resources.push_async_callback(connections.close)
         resources.push_async_callback(close_services)
         if configuration.twitch.enabled:
             twitch_bot = GiveawayTwitchBot(settings, configuration, handlers)
