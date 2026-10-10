@@ -24,6 +24,7 @@ from app.web.access_logging import install_oauth_access_log_filter
 from app.web.routes.admin import router as admin_router
 from app.web.routes.auth import router as auth_router
 from app.web.routes.health import router as health_router
+from app.web.routes.home import router as home_router
 from app.web.routes.overlay import create_overlay_router
 from app.web.websocket import OverlayConnectionManager
 
@@ -120,6 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title="NecsusDevOverlays", lifespan=lifespan)
+app.include_router(home_router)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(admin_router)

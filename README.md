@@ -28,6 +28,7 @@ La release et le développement ont des bases et des rôles PostgreSQL distincts
 
 ## Administration et OBS
 
+- `/` : accueil et accès à l’application.
 - `/admin` : connexion Twitch et gestion de l’overlay.
 - `/health` : contrôle de santé du service.
 - `/docs` : documentation OpenAPI.

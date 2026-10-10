@@ -8,7 +8,11 @@ from fastapi.responses import RedirectResponse
 from twitchio.exceptions import HTTPException as TwitchHTTPException
 from twitchio.exceptions import TwitchioException
 
-from app.application.oauth_state import OAuthStateStore
+from app.application.oauth_state import (
+    OAUTH_STATE_TTL_SECONDS,
+    OAuthFlow,
+    OAuthStateStore,
+)
 from app.application.session import SESSION_COOKIE_NAME, SessionSigner
 from app.core.configuration import ApplicationConfiguration
 from app.core.environment import Settings
@@ -29,6 +33,44 @@ LOGGER = logging.getLogger("uvicorn.error")
 router = APIRouter()
 
 
+def oauth_cookie_secure(request: Request) -> bool:
+    settings = cast(Settings, request.app.state.settings)
+    return settings.session_cookie_secure or request.url.scheme == "https"
+
+
+def oauth_cookie_name(request: Request, state: str) -> str:
+    # Per-transaction names keep parallel tabs independent; __Host- blocks
+    # sibling domains from injecting the browser binding in HTTPS.
+    prefix = "__Host-" if oauth_cookie_secure(request) else ""
+    return f"{prefix}overlays_oauth_{state}"
+
+
+def set_oauth_cookie(
+    request: Request, response: Response, state: str, browser_token: str
+) -> None:
+    response.set_cookie(
+        key=oauth_cookie_name(request, state),
+        value=browser_token,
+        max_age=OAUTH_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=oauth_cookie_secure(request),
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
+def clear_oauth_cookie(request: Request, response: Response, state: str) -> None:
+    response.delete_cookie(
+        key=oauth_cookie_name(request, state),
+        httponly=True,
+        secure=oauth_cookie_secure(request),
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
 @router.get(
     "/auth/twitch/login",
     response_class=RedirectResponse,
@@ -38,7 +80,7 @@ def twitch_login(request: Request) -> RedirectResponse:
     settings = cast(Settings, request.app.state.settings)
     oauth_state_store = cast(OAuthStateStore, request.app.state.oauth_state_store)
 
-    state = oauth_state_store.issue("streamer")
+    state, browser_token = oauth_state_store.issue("streamer")
     authorization_url = build_authorization_url(
         client_id=settings.twitch_client_id,
         redirect_uri=settings.twitch_admin_redirect_uri,
@@ -46,10 +88,12 @@ def twitch_login(request: Request) -> RedirectResponse:
         scopes=STREAMER_SCOPE_NAMES,
     )
 
-    return RedirectResponse(
+    response = RedirectResponse(
         url=authorization_url,
         status_code=status.HTTP_302_FOUND,
     )
+    set_oauth_cookie(request, response, state, browser_token)
+    return response
 
 
 @router.get(
@@ -61,7 +105,7 @@ def twitch_bot_login(request: Request) -> RedirectResponse:
     settings = cast(Settings, request.app.state.settings)
     oauth_state_store = cast(OAuthStateStore, request.app.state.oauth_state_store)
 
-    state = oauth_state_store.issue("bot")
+    state, browser_token = oauth_state_store.issue("bot")
     authorization_url = build_authorization_url(
         client_id=settings.twitch_client_id,
         redirect_uri=settings.twitch_admin_redirect_uri,
@@ -70,10 +114,12 @@ def twitch_bot_login(request: Request) -> RedirectResponse:
         force_verify=True,
     )
 
-    return RedirectResponse(
+    response = RedirectResponse(
         url=authorization_url,
         status_code=status.HTTP_302_FOUND,
     )
+    set_oauth_cookie(request, response, state, browser_token)
+    return response
 
 
 async def complete_bot_authorization(
@@ -135,13 +181,33 @@ async def twitch_callback(
             detail="Invalid or expired OAuth state",
         )
 
-    oauth_flow = oauth_state_store.consume(state)
+    browser_token = request.cookies.get(oauth_cookie_name(request, state))
+    oauth_flow = oauth_state_store.consume(state, browser_token)
     if oauth_flow is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired OAuth state",
         )
 
+    try:
+        response = await complete_twitch_callback(request, code, error, oauth_flow)
+    except HTTPException as callback_error:
+        response = Response()
+        clear_oauth_cookie(request, response, state)
+        callback_error.headers = {
+            **(callback_error.headers or {}),
+            "Set-Cookie": response.headers["set-cookie"],
+            "Cache-Control": "no-store",
+        }
+        raise
+
+    clear_oauth_cookie(request, response, state)
+    return response
+
+
+async def complete_twitch_callback(
+    request: Request, code: str | None, error: str | None, oauth_flow: OAuthFlow
+) -> RedirectResponse:
     if error is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -26,6 +26,19 @@ La procédure et les critères restent dans
 L’accès PostgreSQL depuis le poste de développement est un sujet réseau
 séparé ; voir les [limites réseau](DEPLOY.md#4-données-réseau-et-limites).
 
+## Sécurité — audit après mise en production
+
+L'[audit du dépôt](security/AUDIT.md) distingue les constats locaux des
+validations de production encore nécessaires. Le statut des correctifs,
+les tâches et les critères de clôture sont dans chaque WIS.
+
+- [WIS-0001 — Liaison OAuth au navigateur](security/WIS-0001-oauth-browser-binding.md)
+- [WIS-0002 — Limites des entrées publiques](security/WIS-0002-public-resource-limits.md)
+- [WIS-0003 — Attentes réseau sous verrous](security/WIS-0003-network-under-locks.md)
+- [WIS-0004 — Révocation des sessions](security/WIS-0004-session-revocation.md)
+- [WIS-0005 — Accès des streamers désactivés](security/WIS-0005-disabled-streamer-access.md)
+- [WIS-0006 — Anti-cadrage de l'administration](security/WIS-0006-admin-framing.md)
+
 ## Priorités et dossiers ADR
 
 Les trois dossiers « Campagnes entreprise » forment un seul chantier ; leur
