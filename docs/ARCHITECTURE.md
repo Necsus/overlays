@@ -150,6 +150,11 @@ plusieurs streamers actifs. Une nouvelle exécution ne rejoue pas les versions
 enregistrées ; l'application contrôle la version au démarrage. Les commandes sont dans le
 [README](../README.md#développement-local).
 
+Sous Windows, le point d'entrée CLI PostgreSQL utilise un `asyncio.Runner`
+avec une boucle `SelectorEventLoop`, compatible avec Psycopg asynchrone, pour
+les migrations et `--preflight`. macOS/Linux conservent `asyncio.run` et leur
+boucle par défaut ; ce choix ne modifie pas le lancement du serveur web.
+
 Un verrou applicatif commun sérialise les changements d'identité et de clés avec
 l'authentification/enregistrement des WebSockets, pour ne pas laisser un accès
 s'enregistrer entre une vérification et une révocation. Il est distinct du
