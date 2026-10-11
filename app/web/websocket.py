@@ -99,6 +99,9 @@ class OverlayConnectionManager:
         if sender is not None and sender is not asyncio.current_task():
             sender.cancel()
 
+    def streamer_ids(self) -> set[str]:
+        return set(self._connections.values())
+
     def detach_streamer(self, streamer_id: str) -> list[WebSocket]:
         # Revocation and cancellation are synchronous: no new snapshot can be queued.
         connections = [
@@ -109,9 +112,11 @@ class OverlayConnectionManager:
             self.disconnect(websocket)
         return connections
 
-    async def close_connections(self, connections: list[WebSocket]) -> None:
+    async def close_connections(
+        self, connections: list[WebSocket], code: int = 1008
+    ) -> None:
         await asyncio.gather(
-            *(close_overlay(websocket, code=1008) for websocket in connections)
+            *(close_overlay(websocket, code=code) for websocket in connections)
         )
 
     async def close(self) -> None:

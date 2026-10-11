@@ -1,7 +1,14 @@
 services:
   app:
     image: ghcr.io/necsus/overlays:${OVERLAYS_IMAGE_TAG:?Set OVERLAYS_IMAGE_TAG in .env}
+    container_name: overlays-app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       # Host Nginx reaches this container through the app_egress gateway.
       # Trust only that observed address, never all clients or Docker subnets.

@@ -6,6 +6,7 @@ Apply migrations before starting the application:
 
 import argparse
 import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -290,4 +291,9 @@ async def _main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    if sys.platform == "win32":
+        # Psycopg async connections do not support Windows' Proactor loop.
+        with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+            runner.run(_main())
+    else:
+        asyncio.run(_main())

@@ -50,9 +50,11 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
   ports 80/443 ; aucun proxy applicatif Docker ni montage de clés privées n’est
   nécessaire.
 - `app` publie `127.0.0.1:8000:8000` et communique avec PostgreSQL sur le réseau
-  Docker interne. Le port PostgreSQL est publié uniquement sur
-  `192.168.1.112:5432` pour l’accès LAN TLS ; aucun binding Tailscale ou transfert
-  Freebox n’est configuré.
+  Docker interne. Son nom de conteneur stable est `overlays-app` ; le healthcheck
+  Docker interroge `/health`, ce qui confirme la réponse HTTP de l’application,
+  pas la disponibilité continue de PostgreSQL. Le port PostgreSQL est publié
+  uniquement sur `192.168.1.112:5432` pour l’accès LAN TLS ; aucun binding
+  Tailscale ou transfert Freebox n’est configuré.
 - PostgreSQL central héberge les bases `overlays` et `overlays_dev` avec des
   rôles distincts. L’application et ses migrations restent gérées par ce dépôt ;
   le workflow ne crée ni base ni rôle. L’accès LAN TLS est vérifié depuis pgAdmin.
@@ -150,6 +152,11 @@ plusieurs streamers actifs. Une nouvelle exécution ne rejoue pas les versions
 enregistrées ; l'application contrôle la version au démarrage. Les commandes sont dans le
 [README](../README.md#développement-local).
 
+Sous Windows, le point d'entrée CLI PostgreSQL utilise un `asyncio.Runner`
+avec une boucle `SelectorEventLoop`, compatible avec Psycopg asynchrone, pour
+les migrations et `--preflight`. macOS/Linux conservent `asyncio.run` et leur
+boucle par défaut ; ce choix ne modifie pas le lancement du serveur web.
+
 Un verrou applicatif commun sérialise les changements d'identité et de clés avec
 l'authentification/enregistrement des WebSockets, pour ne pas laisser un accès
 s'enregistrer entre une vérification et une révocation. Il est distinct du
@@ -163,7 +170,18 @@ l'identifiant stable du broadcaster et de l'auteur, jamais le nom affiché ni un
 identifiant fourni par le navigateur.
 
 La session administrative est signée, expirante et portée par un cookie
-`HttpOnly`, `SameSite=Lax`, sécurisé en HTTPS. Chaque transaction OAuth possède
+`HttpOnly`, `SameSite=Lax`, sécurisé en HTTPS. Son identifiant aléatoire est aussi
+enregistré côté serveur : un cookie inconnu ou révoqué est refusé même si sa
+signature est valide. `SessionSigner` protège ce registre par un verrou de thread,
+avec expiration monotone et plafonds de 4096 sessions globales et 32 par streamer.
+Une admission saturée renvoie `503` avec `Retry-After`, sans évincer de session.
+Logout ne révoque que le cookie présenté : les onglets qui le partagent perdent
+l'accès, les sessions indépendantes et les clés OBS restent valides.
+Le registre est en mémoire pour le mono-worker actuel ; redémarrage et migration
+au format v2 imposent une reconnexion. Plusieurs workers nécessiteraient un
+registre partagé, pas plusieurs signataires indépendants.
+
+Chaque transaction OAuth possède
 un state et un secret navigateur indépendants, valables dix minutes. Le secret
 est dans un cookie `HttpOnly`, `SameSite=Lax`, sans Domain et avec Path `/` ;
 son nom est propre au state pour préserver les connexions en onglets parallèles.
@@ -176,9 +194,8 @@ est atomique et à usage unique. Le cookie consommé est supprimé après succè
 annulation ou erreur HTTP gérée ; un flux abandonné expire. Ces cookies ne
 remplacent pas la session administrative et leur secret n'est pas envoyé à Twitch.
 Le redémarrage invalide les transactions en mémoire : une connexion en cours
-doit alors être relancée. Les contrôles locaux sont décrits dans
-[WIS-0001](security/WIS-0001-oauth-browser-binding.md) ; les validations réelles
-navigateur/Twitch restent à faire.
+doit alors être relancée. Les validations réelles navigateur/Twitch restent
+à faire.
 Les tokens OAuth restent côté serveur, hors des tables métier. Chaque message
 EventSub est routé par broadcaster ; la révocation d'un abonnement retire
 uniquement ce streamer du routage des commandes. Son minuteur, ses données et
@@ -195,6 +212,35 @@ avant diffusion ; chaque événement est routé vers son contexte. Sa valeur en 
 Le gestionnaire associe les connexions au streamer et ne sert que Giveaway.
 Les clés OBS sont composées par streamer et plugin ; rotations et diffusions ne
 concernent que le propriétaire correspondant.
+
+`streamers.enabled` porte l'admission **web/OBS**, pas l'activité du chat.
+La dépendance de toutes les API administratives consulte ce statut avant
+admission ; elle revérifie la session après l'attente SQL. L'upsert OAuth ne
+modifie plus ce booléen et refuse les comptes désactivés, sans modifier leur
+profil. Le callback revérifie aussi l'accès après la phase Twitch. Une nouvelle
+connexion OBS exige une clé rattachée à un streamer actif, vérifiée en SQL.
+
+`StreamerAccessGuard` surveille les propriétaires des sessions et sockets actifs.
+Lorsqu'il observe un compte désactivé ou supprimé, ses sessions sont révoquées et
+ses sockets détachés sous le verrou d'accès, puis fermés hors verrou. Les autres
+propriétaires restent indépendants. Les contrôles sont espacés de cinq secondes,
+auxquelles s'ajoutent SQL, contention et nettoyage : ce n'est pas une révocation
+instantanée. Un cycle externe désactivation/réactivation entièrement entre deux
+observations ne garantit pas la révocation des anciens cookies. Les requêtes déjà
+admises peuvent finir ; les octets déjà envoyés ne peuvent pas être rappelés.
+Une panne de vérification refuse les API/nouvelles connexions et ferme les sockets
+non vérifiables (`1011`), sans effacer les sessions des comptes non confirmés comme
+désactivés. La surveillance est collectée avant les services à l'arrêt.
+Les giveaways, minuteurs, données et routage du chat ne sont pas modifiés par ce
+contrôle ; au redémarrage, seuls les contextes des streamers actifs sont restaurés.
+
+L'administration est protégée par les en-têtes HTTP
+`Content-Security-Policy: frame-ancestors 'none'` et `X-Frame-Options: DENY`, sur
+`/admin` et les assets administratifs `/static/`, dont l'alias `/static/admin.html`.
+La protection s'applique aussi avec un préfixe ASGI et sur les réponses `304` ;
+elle ajoute une politique CSP sans remplacer une politique existante. Les pages
+OBS et leurs assets ne sont pas concernés. Le refus effectif du cadrage et la
+compatibilité de l'aperçu `srcdoc` restent à confirmer dans un vrai navigateur.
 
 ## Protection des entrées publiques
 
@@ -245,8 +291,8 @@ les ping/pong du protocole WebSocket restent gérés par le transport.
 La limite de 512 caractères intervient **après assemblage du message par ASGI**.
 Elle ne réduit pas à elle seule les buffers de trames du serveur ni les connexions
 réseau en amont. La validation transport, SQL réel et reconnexion multi-source
-reste dans [WIS-0002](security/WIS-0002-public-resource-limits.md), sans test
-réalisé sur la production ni modification du proxy dans cette étape.
+reste à effectuer, sans test réalisé sur la production ni modification du proxy
+dans cette étape.
 
 ## Diffusion et verrous réseau
 
@@ -292,8 +338,8 @@ les chaînes. Les opérations d'un même streamer restent sérialisées, sans re
 celles d'un autre.
 
 Ces délais reposent sur l'annulation coopérative du transport. Leur efficacité
-réelle, les reconnexions OBS et le comportement TwitchIO restent à confirmer dans
-[WIS-0003](security/WIS-0003-network-under-locks.md). Les attentes SQL nécessaires
+réelle, les reconnexions OBS et le comportement TwitchIO restent à confirmer.
+Les attentes SQL nécessaires
 à la cohérence restent sous les verrous ; aucune modification du proxy, des
 migrations ou du déploiement n'accompagne ce correctif.
 

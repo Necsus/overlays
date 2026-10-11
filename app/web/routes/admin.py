@@ -13,6 +13,7 @@ from app.application.overlay_access import (
 )
 from app.application.session import SessionIdentity
 from app.core.configuration import ApplicationConfiguration
+from app.domain.streamer import Streamer
 from app.infrastructure.database import Database, DatabaseError
 from app.infrastructure.history import (
     list_giveaways,
@@ -24,7 +25,6 @@ from app.infrastructure.overlay_access import (
     load_overlay_access_key_rotated_at,
     rotate_overlay_access_key,
 )
-from app.infrastructure.streamers import load_streamer
 from app.infrastructure.twitch import GiveawayTwitchBot
 from app.web.dependencies import require_session_identity
 from app.web.websocket import OverlayConnectionManager
@@ -41,13 +41,7 @@ def admin_page() -> FileResponse:
 
 @router.get("/api/admin/session")
 async def admin_session(request: Request, identity: SessionDependency) -> dict[str, object]:
-    database = cast(Database, request.app.state.database)
-    try:
-        streamer = await load_streamer(database, identity.twitch_user_id)
-    except DatabaseError:
-        raise HTTPException(status_code=503, detail="Unable to load the Twitch identity") from None
-    if streamer is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    streamer = cast(Streamer, request.state.streamer)
     configuration = cast(ApplicationConfiguration, request.app.state.configuration)
     twitch_bot = cast(GiveawayTwitchBot | None, request.app.state.twitch_bot)
     if twitch_bot is None:
@@ -156,8 +150,6 @@ async def giveaway_preferences(
     request: Request, identity: SessionDependency
 ) -> dict[str, str]:
     database = cast(Database, request.app.state.database)
-    if await load_streamer(database, identity.twitch_user_id) is None:
-        raise HTTPException(status_code=404, detail="Streamer not found")
     try:
         prefix = await load_command_prefix(database, identity.twitch_user_id)
     except DatabaseError:
@@ -170,8 +162,6 @@ async def update_giveaway_preferences(
     request: Request, identity: SessionDependency
 ) -> dict[str, str]:
     database = cast(Database, request.app.state.database)
-    if await load_streamer(database, identity.twitch_user_id) is None:
-        raise HTTPException(status_code=404, detail="Streamer not found")
     try:
         payload = await request.json()
         if not isinstance(payload, dict) or not isinstance(payload.get("command_prefix"), str):
