@@ -50,9 +50,11 @@ Internet → IPv4 publique fixe / routeur TCP 80 et 443
   ports 80/443 ; aucun proxy applicatif Docker ni montage de clés privées n’est
   nécessaire.
 - `app` publie `127.0.0.1:8000:8000` et communique avec PostgreSQL sur le réseau
-  Docker interne. Le port PostgreSQL est publié uniquement sur
-  `192.168.1.112:5432` pour l’accès LAN TLS ; aucun binding Tailscale ou transfert
-  Freebox n’est configuré.
+  Docker interne. Son nom de conteneur stable est `overlays-app` ; le healthcheck
+  Docker interroge `/health`, ce qui confirme la réponse HTTP de l’application,
+  pas la disponibilité continue de PostgreSQL. Le port PostgreSQL est publié
+  uniquement sur `192.168.1.112:5432` pour l’accès LAN TLS ; aucun binding
+  Tailscale ou transfert Freebox n’est configuré.
 - PostgreSQL central héberge les bases `overlays` et `overlays_dev` avec des
   rôles distincts. L’application et ses migrations restent gérées par ce dépôt ;
   le workflow ne crée ni base ni rôle. L’accès LAN TLS est vérifié depuis pgAdmin.
