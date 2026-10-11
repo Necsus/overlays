@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import ClassVar, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     psql_db: str = Field(min_length=1)
     psql_user: str = Field(min_length=1)
     psql_password: SecretStr = Field(min_length=1)
-    psql_sslmode: Literal[
-        "disable", "allow", "prefer", "require", "verify-ca", "verify-full"
-    ] = "prefer"
+    psql_sslmode: Literal["disable", "verify-full"] = "verify-full"
     psql_sslrootcert: Path | None = None
+
+    giveaway_config_file: Path = PROJECT_ROOT / "data" / "settings.json"
 
     @field_validator("psql_host", "psql_db", "psql_user")
     @classmethod
@@ -51,4 +51,25 @@ class Settings(BaseSettings):
             raise ValueError("PostgreSQL connection fields must not be blank")
         return value
 
-    giveaway_config_file: Path = PROJECT_ROOT / "data" / "settings.json"
+    @model_validator(mode="after")
+    def validate_database_tls(self) -> "Settings":
+        if self.psql_sslmode == "disable":
+            # Keep the Docker release exception until CA delivery and a server
+            # certificate valid for "postgres" are ready.
+            target = (self.psql_host, self.psql_db, self.psql_user)
+            if target != ("postgres", "overlays", "overlays_release"):
+                raise ValueError(
+                    "TLS may be disabled only for the internal release connection"
+                )
+            return self
+
+        certificate = self.psql_sslrootcert
+        if (
+            certificate is None
+            or not certificate.is_absolute()
+            or not certificate.is_file()
+        ):
+            raise ValueError(
+                "verify-full requires an existing absolute public PSQL_SSLROOTCERT path"
+            )
+        return self
