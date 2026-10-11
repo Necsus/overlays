@@ -15,12 +15,17 @@ from app.application.oauth_state import (
     OAuthStateStore,
 )
 from app.application.public_limits import PUBLIC_REQUEST_WINDOW_SECONDS
-from app.application.session import SESSION_COOKIE_NAME, SessionSigner
+from app.application.session import (
+    SESSION_COOKIE_NAME,
+    SessionCapacityError,
+    SessionSigner,
+)
+from app.application.streamer_access import StreamerAccessGuard
 from app.core.configuration import ApplicationConfiguration
 from app.core.environment import Settings
 from app.infrastructure.database import Database, DatabaseError
 from app.domain.streamer import Streamer
-from app.infrastructure.streamers import save_streamer
+from app.infrastructure.streamers import StreamerDisabledError, save_streamer
 from app.infrastructure.twitch import GiveawayTwitchBot, TwitchSubscriptionError
 from app.infrastructure.twitch_oauth import (
     BOT_SCOPE_NAMES,
@@ -267,29 +272,37 @@ async def complete_streamer_authorization(
     request: Request, authorization: TwitchAuthorization
 ) -> RedirectResponse:
     database = cast(Database, request.app.state.database)
-    async with database.access_lock:
-        try:
-            await save_streamer(
-                database,
+    access_guard = cast(StreamerAccessGuard, request.app.state.streamer_access)
+    try:
+        async with database.access_lock:
+            try:
+                await save_streamer(
+                    database,
+                    twitch_user_id=authorization.twitch_user_id,
+                    login=authorization.login,
+                    display_name=authorization.display_name,
+                    profile_image_url=authorization.profile_image_url,
+                )
+            except DatabaseError:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Unable to persist the Twitch identity",
+                ) from None
+
+            streamer = Streamer(
                 twitch_user_id=authorization.twitch_user_id,
                 login=authorization.login,
                 display_name=authorization.display_name,
                 profile_image_url=authorization.profile_image_url,
             )
-        except DatabaseError:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Unable to persist the Twitch identity",
-            ) from None
-
-        streamer = Streamer(
-            twitch_user_id=authorization.twitch_user_id,
-            login=authorization.login,
-            display_name=authorization.display_name,
-            profile_image_url=authorization.profile_image_url,
-        )
-        context_factory = request.app.state.ensure_streamer_context
-        giveaway_command_handler = await context_factory(streamer)
+            context_factory = request.app.state.ensure_streamer_context
+            giveaway_command_handler = await context_factory(streamer)
+    except StreamerDisabledError:
+        await access_guard.revoke_streamer(authorization.twitch_user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Streamer access is disabled",
+        ) from None
 
     twitch_bot = cast(
         GiveawayTwitchBot | None,
@@ -321,13 +334,32 @@ async def complete_streamer_authorization(
         SessionSigner,
         request.app.state.session_signer,
     )
-    cookie_value = session_signer.create(
-        authorization.twitch_user_id,
-    )
+    # Access can change during the Twitch phase, which intentionally runs outside the lock.
+    try:
+        streamer = await access_guard.load_streamer(authorization.twitch_user_id)
+    except DatabaseError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify streamer access",
+        ) from None
+    if streamer is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Streamer access is disabled",
+        )
+    try:
+        cookie_value = session_signer.create(authorization.twitch_user_id)
+    except SessionCapacityError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Administrative sessions are temporarily unavailable",
+            headers={"Retry-After": "60", "Cache-Control": "no-store"},
+        ) from None
 
     response = RedirectResponse(
         url="/admin",
         status_code=status.HTTP_303_SEE_OTHER,
+        headers={"Cache-Control": "no-store"},
     )
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -348,7 +380,14 @@ async def complete_streamer_authorization(
 )
 def logout(request: Request) -> Response:
     settings = cast(Settings, request.app.state.settings)
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    session_signer = cast(SessionSigner, request.app.state.session_signer)
+    cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
+    if cookie_value is not None:
+        session_signer.revoke(cookie_value)
+    response = Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={"Cache-Control": "no-store"},
+    )
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",

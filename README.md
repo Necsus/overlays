@@ -35,6 +35,13 @@ Les données d’exécution persistent dans le volume `overlays_overlays_runtime
 
 Déclarer dans la console Twitch le callback exact configuré, généralement `https://overlays.necsus.dev/auth/twitch/callback`. Autoriser le compte bot via `/auth/twitch/bot/login`, puis le streamer dans `/admin`. Copier le lien généré du plugin Giveaway dans une source navigateur OBS ; ce lien contient une clé confidentielle. Sa rotation invalide l’ancien lien.
 
+La déconnexion révoque la session courante côté serveur, sans invalider les liens
+OBS ni les sessions indépendantes. Les onglets partageant ce cookie sont tous
+déconnectés. Les sessions sont en mémoire pour le mono-worker actuel : un
+redémarrage impose une nouvelle connexion, y compris après cette mise à jour.
+Un streamer dont l'accès est désactivé ne peut plus accéder à l'administration
+ou à OBS ; une connexion Twitch ne le réactive pas automatiquement.
+
 Commandes par défaut :
 
 | Commande | Accès | Fonction |

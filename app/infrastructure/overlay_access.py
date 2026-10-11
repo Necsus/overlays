@@ -25,8 +25,10 @@ async def resolve_overlay_access_key(
 ) -> str | None:
     async with database.transaction() as connection, connection.cursor() as cursor:
         await cursor.execute(
-            """SELECT streamer_id FROM overlay_access_keys
-                   WHERE plugin_slug = %s AND token_hash = %s LIMIT 1""",
+            """SELECT access.streamer_id FROM overlay_access_keys AS access
+                   JOIN streamers ON streamers.twitch_user_id = access.streamer_id
+                   WHERE access.plugin_slug = %s AND access.token_hash = %s
+                       AND streamers.enabled LIMIT 1""",
             (plugin_slug, token_hash),
         )
         row = await cursor.fetchone()

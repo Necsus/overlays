@@ -4,6 +4,10 @@ from app.domain.streamer import Streamer
 from app.infrastructure.database import Database
 
 
+class StreamerDisabledError(PermissionError):
+    """OAuth must not reactivate an account whose access was disabled."""
+
+
 async def save_streamer(
     database: Database,
     twitch_user_id: str,
@@ -22,10 +26,13 @@ async def save_streamer(
                        login = excluded.login,
                        display_name = excluded.display_name,
                        profile_image_url = excluded.profile_image_url,
-                       enabled = excluded.enabled,
-                       updated_at = excluded.updated_at""",
+                       updated_at = excluded.updated_at
+                   WHERE streamers.enabled
+                   RETURNING twitch_user_id""",
             (twitch_user_id, login, display_name, profile_image_url, now, now),
         )
+        if await cursor.fetchone() is None:
+            raise StreamerDisabledError("Streamer access is disabled")
 
 
 async def load_active_streamers(database: Database) -> list[Streamer]:
@@ -35,6 +42,20 @@ async def load_active_streamers(database: Database) -> list[Streamer]:
                    FROM streamers WHERE enabled ORDER BY twitch_user_id"""
         )
         return [Streamer(**row) for row in await cursor.fetchall()]
+
+
+async def load_enabled_streamer_ids(
+    database: Database, twitch_user_ids: list[str]
+) -> set[str]:
+    if not twitch_user_ids:
+        return set()
+    async with database.transaction() as connection, connection.cursor() as cursor:
+        await cursor.execute(
+            """SELECT twitch_user_id FROM streamers
+                   WHERE twitch_user_id = ANY(%s) AND enabled""",
+            (twitch_user_ids,),
+        )
+        return {row["twitch_user_id"] for row in await cursor.fetchall()}
 
 
 async def load_streamer(database: Database, twitch_user_id: str) -> Streamer | None:

@@ -10,6 +10,7 @@ from app.application.commands import GiveawayCommandHandler
 from app.application.oauth_state import OAuthStateStore
 from app.application.service import GiveawayService
 from app.application.session import SessionSigner
+from app.application.streamer_access import StreamerAccessGuard
 from app.core.configuration import configuration_from_settings
 from app.core.environment import Settings
 from app.domain.giveaway import GiveawayEngine
@@ -21,6 +22,7 @@ from app.infrastructure.streamers import load_active_streamers
 from app.infrastructure.twitch import GiveawayTwitchBot
 from app.infrastructure.twitch_oauth import TwitchOAuthClient
 from app.web.access_logging import install_oauth_access_log_filter
+from app.web.admin_security import AdminFramingProtection
 from app.web.routes.admin import router as admin_router
 from app.web.routes.auth import router as auth_router
 from app.web.routes.health import router as health_router
@@ -81,6 +83,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.database = database
     app.state.configuration = configuration
     app.state.session_signer = session_signer
+    streamer_access = StreamerAccessGuard(database, session_signer, connections)
+    app.state.streamer_access = streamer_access
     app.state.oauth_state_store = OAuthStateStore()
     app.state.overlay_connections = connections
     app.state.giveaway_engines = engines
@@ -112,9 +116,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 twitch_bot.start(with_adapter=False), name="twitch-bot"
             )
         app.state.twitch_bot = twitch_bot
+        access_task = asyncio.create_task(streamer_access.run(), name="streamer-access-monitor")
         try:
             yield
         finally:
+            access_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await access_task
             if twitch_task is not None:
                 twitch_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -122,6 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title="NecsusDevOverlays", lifespan=lifespan)
+app.add_middleware(AdminFramingProtection)
 app.include_router(home_router)
 app.include_router(health_router)
 app.include_router(auth_router)
