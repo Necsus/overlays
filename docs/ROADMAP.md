@@ -17,6 +17,11 @@ HTTPS `/health` et `/` renvoient 200 ; voir
 - Confirmer l’inaccessibilité du port PostgreSQL depuis Tailscale et Internet.
 - Définir le contrat et les workflows réutilisables communs de `geekom`.
 
+## Diagnostic mémoire
+
+- [WI-001 — Consommation mémoire d’overlays-app](todo/WI-001-diagnostic-memoire.md) :
+  revue statique effectuée ; mesures et confirmation de la cause à reprendre.
+
 ## Validation des protections d'accès
 
 Les protections actuelles sont décrites dans
