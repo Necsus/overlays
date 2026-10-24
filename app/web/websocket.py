@@ -11,6 +11,8 @@ MAX_OVERLAY_CONNECTIONS = 256
 MAX_OVERLAY_CONNECTIONS_PER_STREAMER = 8
 OVERLAY_SEND_TIMEOUT_SECONDS = 1
 OVERLAY_CLOSE_TIMEOUT_SECONDS = 1
+OVERLAY_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60
+OVERLAY_IDLE_CLOSE_CODE = 4000
 LOGGER = logging.getLogger("uvicorn.error")
 
 
@@ -34,11 +36,15 @@ class OverlayConnectionManager:
         max_connections: int = MAX_OVERLAY_CONNECTIONS,
         max_per_streamer: int = MAX_OVERLAY_CONNECTIONS_PER_STREAMER,
         max_handshakes_per_client: int = MAX_OVERLAY_HANDSHAKES_PER_CLIENT,
+        idle_timeout_seconds: float = OVERLAY_IDLE_TIMEOUT_SECONDS,
     ) -> None:
         if min(
             max_handshakes, max_connections, max_per_streamer, max_handshakes_per_client
         ) <= 0:
             raise ValueError("Overlay connection quotas must be positive")
+        if idle_timeout_seconds <= 0:
+            raise ValueError("Overlay idle timeout must be positive")
+        self._idle_timeout_seconds = idle_timeout_seconds
         self._max_handshakes = max_handshakes
         self._max_handshakes_per_client = max_handshakes_per_client
         self._max_connections = max_connections
@@ -152,7 +158,15 @@ class OverlayConnectionManager:
     ) -> None:
         try:
             while True:
-                state = await queue.get()
+                try:
+                    # Each successful state send starts a fresh idle period.
+                    # Transport ping/pong frames do not count as application activity.
+                    async with asyncio.timeout(self._idle_timeout_seconds):
+                        state = await queue.get()
+                except TimeoutError:
+                    self.disconnect(websocket)
+                    await close_overlay(websocket, code=OVERLAY_IDLE_CLOSE_CODE)
+                    return
                 try:
                     async with asyncio.timeout(OVERLAY_SEND_TIMEOUT_SECONDS):
                         await websocket.send_json({"type": "giveaway.state", "data": state})

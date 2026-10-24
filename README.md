@@ -88,6 +88,12 @@ redémarrage impose une nouvelle connexion, y compris après cette mise à jour.
 Un streamer dont l'accès est désactivé ne peut plus accéder à l'administration
 ou à OBS ; une connexion Twitch ne le réactive pas automatiquement.
 
+Un WebSocket OBS est fermé après six heures sans nouvel état Giveaway envoyé.
+Les ping/pong réseau ne prolongent pas ce délai. L’overlay est alors effacé et
+ne se reconnecte pas automatiquement : rafraîchir la source navigateur OBS
+pour reprendre, même si un giveaway est encore ouvert. Les reconnexions après
+une coupure réseau restent automatiques.
+
 Commandes par défaut :
 
 | Commande | Accès | Fonction |

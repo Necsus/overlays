@@ -1,3 +1,5 @@
+const OVERLAY_IDLE_CLOSE_CODE = 4000;
+
 function connectWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const token = window.location.hash.slice(1);
@@ -26,7 +28,8 @@ function connectWebSocket() {
   });
 
   websocket.addEventListener("close", (event) => {
-    if (event.code === 1008) {
+    // Idle expiry requires refreshing the OBS source, not an automatic retry.
+    if (event.code === 1008 || event.code === OVERLAY_IDLE_CLOSE_CODE) {
       clearGiveaway();
       return;
     }
