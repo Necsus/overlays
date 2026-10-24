@@ -31,6 +31,33 @@ Le service est la source de vérité. Chaque streamer possède un moteur, un
 service, un verrou asynchrone et un minuteur ; OBS affiche les données mais ne
 choisit jamais les gagnants.
 
+## Compatibilité des connexions Twitch
+
+`GiveawayTwitchBot` installe, avant l'initialisation d'AutoBot, le contournement
+`app/infrastructure/twitch_websocket.py`. Il remplace en mémoire uniquement la
+méthode `Websocket.close` de TwitchIO **3.3.2**, de façon idempotente. Aucun fichier
+de la bibliothèque installée n'est modifié. Une autre version provoque une erreur
+explicite à la construction du bot : ce contournement doit être réévalué avant
+toute mise à jour de TwitchIO.
+
+Quand la tâche de keepalive expirée appelle sa propre fermeture, le contournement
+détache sa référence sans l'annuler, puis attend la fermeture d'origine. La tâche
+peut ainsi terminer le nettoyage réseau avant de retourner. Les fermetures depuis
+une autre tâche, les options `cleanup`/`reassociate` et les annulations externes
+conservent leur comportement d'origine.
+
+Cette correction locale ne ferme pas rétroactivement les transports déjà perdus
+par un processus en cours. Elle ne concerne pas l'expiration des connexions OBS.
+Les contrôles ponctuels avec transport simulé vérifient le nettoyage, les options,
+les annulations et la garde de version. La comparaison TCP réelle avant/après
+est réussie dans un conteneur jetable issu de l'image déployée, avec la même
+implémentation du correctif. Le parcours AutoBot/TLS et l'évolution
+RAM/descripteurs après un déploiement restent à confirmer. Le correctif n'est
+pas encore livré en production.
+Les mesures, la reproduction initiale et le protocole isolé sont dans
+[WI-001](todo/WI-001-diagnostic-memoire.md). Retirer ce contournement lorsqu'une
+correction amont aura été validée.
+
 ## Déploiement et entrée web
 
 La production utilise Debian, Docker Compose et GitHub Actions, qui construit
@@ -258,6 +285,7 @@ n'est nécessaire.
 | Authentifications OBS simultanées | 32, dont 8 par IP |
 | Tentatives de connexion OBS | 120 par fenêtre, dont 30 par IP |
 | Connexions OBS authentifiées | 256 au total, dont 8 par streamer |
+| Inactivité d'une connexion OBS authentifiée | 6 h sans nouvel état Giveaway envoyé |
 
 Les fenêtres de débit sont fixes, de 60 secondes, et autorisent un nouveau
 budget à leur renouvellement : ce n'est pas une fenêtre glissante. Les compteurs
@@ -314,6 +342,15 @@ Chaque émetteur retient au plus un état courant et un état en attente ; cette
 borne porte sur le nombre d'instantanés, pas leur taille en octets. Le lifespan
 arrête les minuteurs puis annule et collecte les émetteurs à la fermeture.
 
+Après chaque envoi d'état réussi, l'émetteur attend le prochain état pendant
+six heures au maximum. À expiration, il détache la connexion, libère sa file et
+ferme le transport avec le code applicatif `4000`. Aucun moniteur supplémentaire
+n'est créé par socket ; les ping/pong réseau ne remettent pas ce délai à zéro.
+Le client efface l'overlay et ne tente pas de reconnexion sur ce code : un
+rafraîchissement de la source OBS est nécessaire, même si le giveaway reste
+ouvert. Les autres fermetures gardent leur comportement de reconnexion existant.
+Cette expiration ne concerne pas les WebSockets Twitch/EventSub.
+
 Une rotation conserve le verrou d'accès pendant le changement SQL de clé et
 le détachement synchrone des sockets concernés, qui supprime leurs files et
 annule leurs émetteurs. Elle ferme ensuite uniquement les transports capturés,
@@ -348,6 +385,7 @@ migrations ou du déploiement n'accompagne ce correctif.
 | Route | Fonction |
 | --- | --- |
 | `/` | Page d’accueil publique avec accès à l’application |
+| `/robots.txt` | Consigne de ne parcourir aucune route pour tous les robots coopératifs |
 | `/admin`, `/api/admin/session` | Interface et état administratif |
 | `/auth/twitch/login`, `/auth/twitch/bot/login` | OAuth streamer et bot |
 | `/auth/twitch/callback`, `/auth/logout` | Retour OAuth et déconnexion |
@@ -359,6 +397,12 @@ migrations ou du déploiement n'accompagne ce correctif.
 | `/plugins/giveaway/overlay`, `/plugins/giveaway/static` | Page et assets OBS |
 | `/plugins/giveaway/ws` | WebSocket authentifié |
 | `/health` | Réponse du service, pas une disponibilité complète |
+
+`/robots.txt` est servi en texte brut avec `User-agent: *` et `Disallow: /`.
+Cette consigne ne constitue pas un contrôle d'accès : elle ne bloque pas les
+robots malveillants et ne garantit pas la désindexation des URL déjà connues.
+La réponse HTTP a été contrôlée localement ; sa disponibilité en production
+reste à vérifier après déploiement.
 
 La clé est placée dans le fragment de l'URL, absent de la requête HTTP initiale.
 Le navigateur l'envoie comme premier message WebSocket :

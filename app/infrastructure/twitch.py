@@ -9,6 +9,7 @@ from app.application.commands import ChatUser, GiveawayCommandHandler
 from app.core.configuration import ApplicationConfiguration
 from app.core.environment import Settings
 from app.infrastructure.twitch_oauth import BOT_SCOPE_NAMES, TwitchAuthorization
+from app.infrastructure.twitch_websocket import install_twitchio_keepalive_close_fix
 
 LOGGER = logging.getLogger("uvicorn.error")
 BOT_SCOPES = authentication.Scopes(BOT_SCOPE_NAMES)
@@ -25,6 +26,7 @@ class GiveawayTwitchBot(commands.AutoBot):
         configuration: ApplicationConfiguration,
         command_handlers: dict[str, GiveawayCommandHandler],
     ) -> None:
+        install_twitchio_keepalive_close_fix()
         self._handlers = dict(command_handlers)
         self._subscription_locks: dict[str, asyncio.Lock] = {}
         self._chat_subscription_ids: dict[str, str] = {}
