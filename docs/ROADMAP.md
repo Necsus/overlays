@@ -1,39 +1,24 @@
 # NecsusDevOverlays — Roadmap
 
-Ce fichier est l’index du travail restant. L’existant est décrit dans
-[l’architecture](ARCHITECTURE.md) ; l’installation et l’usage dans le
-[README](../README.md).
-
-## Chantier actif — validations post-déploiement
-
-PostgreSQL central est en service et l’application est déployée. Les contrôles
-HTTPS `/health` et `/` renvoient 200 ; voir
+Index du travail restant. L’existant est dans [l’architecture](ARCHITECTURE.md),
+l’usage dans le [README](../README.md) et l’état du déploiement dans
 [DEPLOY.md](DEPLOY.md#état-et-points-à-confirmer).
 
-- Valider le parcours OAuth Twitch après le renforcement de sa liaison au navigateur.
-- Valider les liens OBS générés, le WebSocket OBS et le renouvellement Certbot
-  avec le vhost TLS.
-- Définir et tester les sauvegardes/restaurations du volume PostgreSQL central.
-- Confirmer l’inaccessibilité du port PostgreSQL depuis Tailscale et Internet.
-- Définir le contrat et les workflows réutilisables communs de `geekom`.
+## Validations post-déploiement
 
-## Diagnostic mémoire
+- Parcours OAuth Twitch avec liaison au navigateur.
+- Liens et WebSockets OBS, reconnexions et confiance proxy effective.
+- Renouvellement Certbot avec le vhost TLS actif.
+- Inaccessibilité de PostgreSQL depuis Tailscale et Internet.
+- Administration dans un vrai navigateur : refus de cadrage, aperçu isolé,
+  navigation, copie des liens et rendu responsive.
+- Disponibilité de `robots.txt` en production.
 
-- [WI-001 — Consommation mémoire d’overlays-app](todo/WI-001-diagnostic-memoire.md) :
-  revue statique effectuée ; mesures et confirmation de la cause à reprendre.
-
-## Validation des protections d'accès
-
-Les protections actuelles sont décrites dans
-[l'architecture](ARCHITECTURE.md#authentification-et-isolation). Leur validation
-réelle PostgreSQL/Twitch/OBS/navigateur reste à effectuer, notamment la révocation
-des sessions, l'admission des comptes désactivés et le refus de cadrage.
+La validation des protections d’accès doit couvrir révocation des sessions,
+comptes désactivés et isolation des propriétaires, pas seulement la connexion
+nominale. Les sauvegardes et scénarios de panne sont suivis dans ADR-0011.
 
 ## Priorités et dossiers ADR
-
-Les trois dossiers « Campagnes entreprise » forment un seul chantier ; leur
-découverte métier peut avancer en parallèle, sans autoriser le développement des
-extensions.
 
 | Ordre | Dossier |
 | --- | --- |
@@ -47,17 +32,16 @@ extensions.
 | 7 | [Campagnes entreprise — découverte et parcours métier](adr/0010-campagnes-decouverte.md) |
 | 8 | [Exploitation durable](adr/0011-exploitation-durable.md) |
 
-## Lire et actualiser les dossiers
+Les trois dossiers Campagnes forment un seul chantier. La découverte métier
+peut avancer en parallèle, sans autoriser le développement des extensions.
+Les workflows réutilisables communs de `geekom` restent à définir et tester.
 
-- Les ADR ouverts précisent contexte, décision ou orientation, conséquences et
-  statut. Certains suivent une validation plutôt qu'une nouvelle décision
-  d'architecture.
-- Les tâches et critères de fin restent dans le dossier concerné, sans
-  duplication. Les validations PostgreSQL isolées et les sauvegardes sont dans
-  [ADR-0011](adr/0011-exploitation-durable.md).
-- Après clôture, retirer l'entrée de cet index et déplacer l'ADR vers
-  `adr/archive/`. Reporter dans l'architecture ou le README l'information
-  encore utile. Les dossiers ouverts ne pointent pas vers l'archive.
-- Les règles de travail, de sécurité et d'autorisation restent dans
-  [AGENTS.md](../AGENTS.md). Aucun plan ne vaut autorisation de coder, créer des
-  tests/scripts ou modifier le réseau.
+## Tenir la documentation à jour
+
+Les ADR ouverts portent décisions, questions et critères de fin, sans répéter
+l’implémentation. Après clôture, retirer leur entrée de cet index, déplacer le
+dossier dans `adr/archive/` et conserver seulement l’information utile dans
+l’architecture ou le README. Les documents ouverts ne pointent pas vers l’archive.
+
+Les règles de travail restent dans [AGENTS.md](../AGENTS.md) ; un plan ne vaut
+pas autorisation de coder, tester ou intervenir sur la production.

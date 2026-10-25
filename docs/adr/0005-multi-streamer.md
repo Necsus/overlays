@@ -2,43 +2,23 @@
 
 [← Roadmap](../ROADMAP.md)
 
-**Statut :** implémentation ajoutée ; validation simultanée réelle restante.
+**Statut :** implémenté ; validation simultanée réelle restante.
 
-## Contexte
+## Décision
 
-Le socle OAuth existe, mais les ressources doivent être isolées pour plusieurs
-chaînes actives.
+Rattacher données et ressources actives à l’identité Twitch stable du streamer.
+Un bot global dessert les chaînes ; les accès web et OBS ne doivent jamais
+croiser leurs propriétaires. L’existant est décrit dans
+[l’architecture](../ARCHITECTURE.md#authentification-et-isolation).
 
-## Décision ou orientation
+## Validation restante
 
-Rattacher les données et les ressources actives à chaque streamer, avec contrôle
-systématique de l’identité de session.
+Avec deux chaînes actives simultanément, vérifier :
 
-## Conséquences
+- commandes, préfixes, participants, résultats et historique indépendants ;
+- refus des accès directs à une ressource de l’autre propriétaire ;
+- rotation d’une clé OBS et révocation EventSub sans effet sur l’autre chaîne ;
+- restauration des deux giveaways et de leurs minuteurs après redémarrage.
 
-Adapter les migrations, unicités et cycles de vie ; vérifier l’absence de
-croisements après redémarrage.
-
-## Travail associé et validation
-
-À partir du socle OAuth et PostgreSQL existant. La migration v2 supprime les
-giveaways PostgreSQL existants (données de test non conservées) ; identités et
-clés OBS restent en place. L'architecture de la cible est décrite dans
-[Architecture](../ARCHITECTURE.md).
-
-Implémentation ajoutée :
-
-- migration versionnée vers le propriétaire par giveaway et unicité par
-  streamer ; les giveaways de test préexistants sont supprimés plutôt que mal
-  attribués ;
-- moteurs, services, minuteurs et connexions OBS isolés par streamer ;
-- abonnements EventSub multiples restaurés avec le même bot ; une révocation
-  désactive uniquement le routage du streamer concerné ;
-- préfixe de commande par streamer et historique paginé avec détail participants
-  et gagnants ;
-- opérations SQL et accès API filtrés par identité de session, avec `404` pour
-  une ressource appartenant à un autre streamer.
-
-**Terminé quand :** deux chaînes utilisent simultanément des giveaways
-indépendants, y compris après redémarrage, sans commandes, données ou
-révocations croisées.
+**Terminé quand :** ces parcours sont confirmés en conditions réelles, sans
+commande, donnée ou révocation croisée.

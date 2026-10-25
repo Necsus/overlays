@@ -15,9 +15,9 @@ explicite, copie manuelle et aperçu isolé.
 
 ## Conséquences
 
-Dépend de PostgreSQL et des contrôles de propriété du
-[chantier multi-streamer](0005-multi-streamer.md). Les copies déjà sauvegardées
-ou collées dans OBS ne peuvent pas être révoquées à distance.
+S’appuyer sur les [contrôles de propriété existants](../ARCHITECTURE.md#authentification-et-isolation).
+L’[aperçu isolé](../ARCHITECTURE.md#administration-et-aperçus) est déjà disponible ;
+la persistance et le partage des styles restent à développer.
 
 ## Travail associé et validation
 
@@ -57,30 +57,21 @@ synchronisation automatique.
 - Une modification ou suppression dans la bibliothèque ne modifie jamais le CSS
   déjà collé dans OBS. Pour actualiser le rendu, l'utilisateur copie puis colle
   à nouveau le bloc.
-- La compatibilité repose sur les sélecteurs Giveaway documentés dans le
-  [README](../../README.md#connecter-twitch-et-obs), compteur compris. Définir
-  leur stabilité avant l'ouverture du partage ; ne pas promettre une
-  compatibilité avec toutes les futures versions.
-- Ajouter une prévisualisation du CSS avec un sélecteur couvrant chaque état
-  réel : `HIDDEN` (masqué), `WAITING` (en attente), `OPEN` (ouvert) et `WINNER`
-  (gagnant). Utiliser uniquement des valeurs fictives : lot, nombre de
-  participants et noms des gagnants. Prévoir les variantes avec/sans compteur et
-  avec un ou plusieurs gagnants, ainsi que des textes longs pour contrôler les
-  débordements. Pour `HIDDEN`, l'overlay reste invisible ; une indication hors
-  aperçu explique cet état.
-- L'aperçu utilise le même contrat de DOM et de rendu que l'overlay OBS, sans
-  connexion Twitch/WebSocket, sans clé OBS et sans lecture ni modification du
-  giveaway réel. Le temps simulé doit rester reproductible, sans dépendre d'une
-  échéance réelle périmée.
+- Définir et documenter le contrat des sélecteurs Giveaway avant l’ouverture du
+  partage, compteur compris. Le DOM courant est dans
+  `app/web/static/plugins/giveaway/overlay.html` ; il ne constitue pas encore
+  une promesse de compatibilité avec toutes les versions futures.
+- Relier la bibliothèque à l’aperçu existant, puis valider chaque état avec des
+  données fictives : compteur avec/sans durée, gagnants multiples, textes longs
+  et état masqué. Aucun scénario ne doit toucher au giveaway réel.
 - Reporter l'application distante, l'historique de versions, les notes et les
   commentaires. Aucun framework de thèmes ou nouveau plugin n'est nécessaire à
   cette étape.
 
 ### Isolation et sécurité
 
-- S'appuyer sur l'identité de session et les migrations versionnées du chantier
-  multi-streamer. La propriété et les contrôles d'accès sont requis dès la
-  première sauvegarde, même avec une seule chaîne active.
+- Les contrôles de propriété sont requis dès la première sauvegarde, même avec
+  une seule chaîne active.
 - Vérifier les droits côté serveur pour chaque liste, lecture, copie et
   mutation. Ne jamais faire confiance à un propriétaire fourni par le
   navigateur.
@@ -117,11 +108,8 @@ synchronisation automatique.
    privés, refus des accès anonymes, lecture partagée sans droit d'édition,
    copie privée indépendante, retrait du partage et suppression. Vérifier les
    accès directs à l'API, pas seulement les boutons de l'interface.
-5. Ajouter et contrôler l'aperçu isolé sur chaque état, avec des données
-   fictives : compteur avec/sans durée, gagnants multiples, textes longs et
-   overlay masqué. Vérifier que le CSS ne peut ni affecter l'administration ni charger
-   de ressources externes, et que les changements de scénario ne touchent pas au
-   giveaway réel.
+5. Intégrer les styles sauvegardés à l’aperçu existant et contrôler son isolation
+   et les scénarios ci-dessus dans un vrai navigateur.
 6. Valider réellement dans OBS le bloc copié : transparence, états du giveaway,
    gagnants et compteur avec/sans durée. Vérifier qu'une modification du style
    d'origine n'affecte pas la copie ni le rendu déjà configuré dans OBS.

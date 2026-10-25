@@ -4,9 +4,9 @@ Plateforme d’overlays Twitch pour OBS, pilotés depuis le chat et administrés
 
 ## Développement local
 
-Prérequis : Python 3.11+ et accès au PostgreSQL 18 du Geekom depuis le LAN, sous Windows ou macOS. L’instance centrale contient `overlays` (production) et `overlays_dev` (développement), avec des rôles distincts. Le LAN exige TLS vérifié : récupérer uniquement le certificat public CA du Geekom sur chaque poste, puis renseigner `PSQL_SSLROOTCERT` dans son `.env` local avec un chemin absolu vers ce fichier existant. La connexion locale exige `PSQL_SSLMODE=verify-full` (également la valeur par défaut). Les modes `prefer`, `require` et `verify-ca` sont refusés. Seule la connexion release existante `postgres` / `overlays` / `overlays_release` conserve explicitement `disable` sur le réseau Docker privé ; sa migration TLS nécessite de livrer le CA au conteneur et un certificat serveur valable pour `postgres`. Le service central, la localisation du certificat public et les règles réseau sont décrits dans le [runbook PostgreSQL de `geekom`](https://github.com/Necsus/geekom/blob/main/docs/runbooks/postgresql.md) et son [architecture](https://github.com/Necsus/geekom/blob/main/docs/architecture.md).
+Prérequis : Python 3.11+, Windows ou macOS et accès LAN au PostgreSQL 18 du Geekom. Utiliser la base `overlays_dev` et son rôle dédié, jamais les identifiants de production.
 
-Les deux postes se connectent directement à `192.168.1.112:5432` : aucune clé SSH ni aucun tunnel ne sont nécessaires sur le LAN. Le certificat serveur identifie cette adresse ; ne pas la remplacer par `localhost`. Installer le CA hors du dépôt, par exemple dans `.postgresql` du dossier utilisateur :
+La connexion LAN utilise `192.168.1.112:5432` avec `PSQL_SSLMODE=verify-full`. Récupérer uniquement le certificat public CA selon le [runbook PostgreSQL de `geekom`](https://github.com/Necsus/geekom/blob/main/docs/runbooks/postgresql.md), puis renseigner `PSQL_SSLROOTCERT` dans le `.env` local. Ne pas remplacer l’adresse par `localhost` : le certificat identifie l’IP LAN. Aucun tunnel SSH n’est nécessaire sur ce réseau. Installer le CA hors du dépôt :
 
 | Poste | Exemple fictif de `PSQL_SSLROOTCERT` dans `.env` |
 | --- | --- |
@@ -66,11 +66,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 
 ## Déploiement sur le Geekom
 
-Un push sur `main` publie une image taguée par commit sur GHCR, puis la déploie sur le Geekom via GitHub Actions, Tailscale et Tailscale SSH. Les PR vers `main` construisent l’image sans la publier.
-
-Le Nginx/Certbot commun et le vhost HTTPS Overlays sont en place. L’application est déployée sur PostgreSQL central ; le précontrôle, les migrations et les sondes de santé du workflow ont réussi. Les contrôles HTTPS récents renvoient 200 sur `/health` et `/`. Le parcours OAuth après le renforcement de sa liaison au navigateur, OBS/WebSocket et le renouvellement Certbot restent à valider. Voir [docs/DEPLOY.md](docs/DEPLOY.md), la [roadmap](docs/ROADMAP.md) et l’architecture du dépôt [geekom](https://github.com/Necsus/geekom/blob/main/docs/architecture.md).
-
-Les données d’exécution persistent dans le volume `overlays_overlays_runtime`. Le schéma de la base centrale `overlays` est en version 2.
+Un push sur `main` publie et déploie l’image via GitHub Actions ; une PR construit seulement l’image. Configuration, effets du déploiement et procédures : [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Administration et OBS
 
@@ -83,8 +79,7 @@ Déclarer dans la console Twitch le callback exact configuré, généralement `h
 
 La déconnexion révoque la session courante côté serveur, sans invalider les liens
 OBS ni les sessions indépendantes. Les onglets partageant ce cookie sont tous
-déconnectés. Les sessions sont en mémoire pour le mono-worker actuel : un
-redémarrage impose une nouvelle connexion, y compris après cette mise à jour.
+déconnectés. Un redémarrage impose une nouvelle connexion.
 Un streamer dont l'accès est désactivé ne peut plus accéder à l'administration
 ou à OBS ; une connexion Twitch ne le réactive pas automatiquement.
 
@@ -106,11 +101,13 @@ Commandes par défaut :
 
 Le préfixe est configurable dans l’administration. L’échéance et les résultats sont persistés ; un tirage automatique a lieu à l’expiration si des participants sont inscrits.
 
+L’aperçu CSS utilise des données fictives et ne modifie pas le giveaway réel. Le CSS n’est ni sauvegardé ni envoyé à OBS : le copier dans le champ **CSS personnalisé** de la source navigateur. Les ressources externes ne sont pas chargées dans l’aperçu. Le plugin Chat et la suppression de compte ne sont pas encore disponibles.
+
 ## Sécurité et données
 
 Ne jamais versionner, afficher ou partager `.env`, `.tio.tokens.json` ou une clé OBS. `.env.example` est le modèle partageable. PostgreSQL contient les identités, giveaways, participants, gagnants et empreintes des clés OBS ; les tokens Twitch restent hors de la base.
 
-Les sauvegardes PostgreSQL doivent être conservées hors du dépôt et leur restauration vérifiée vers une autre base vide. La procédure et les contrôles restant à valider figurent dans [ADR-0011](docs/adr/0011-exploitation-durable.md).
+Les sauvegardes PostgreSQL doivent être conservées hors du dépôt et leur restauration vérifiée vers une autre base vide. La procédure reste à définir et valider : voir [ADR-0011](docs/adr/0011-exploitation-durable.md).
 
 ## Documentation
 

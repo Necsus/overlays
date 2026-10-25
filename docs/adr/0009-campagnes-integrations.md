@@ -39,11 +39,9 @@ publique ni modification réseau n’est autorisée par ce dossier.
   Distinguer ce qui est configurable sans code de ce qui exige un nouvel
   adaptateur ; ne pas construire un moteur d'intégration universel dès la
   première tranche.
-- Fournir progressivement le nécessaire à l'intégration : contrat d'API,
-  exemples fictifs de requêtes/réponses et d'erreurs, procédure de configuration
-  des secrets, environnement de validation isolé et état des échanges sans
-  secrets. La création de scripts, exemples exécutables ou tests reste soumise à
-  [AGENTS.md](../../AGENTS.md).
+- Les livrables d’intégration du pilote sont définis dans le
+  [MVP](0008-campagnes-mvp.md). L’état des échanges doit rester consultable sans
+  exposer les secrets.
 
 ### Mesure et attribution fiables
 
@@ -120,7 +118,8 @@ Lien global ou streamer → redirection vers l'entreprise
   personnelle : cadrer information/consentement lorsque requis, responsabilités
   entreprise/service, conservation, suppression et accès avant un usage réel.
   Pas de fingerprinting ni de rapprochement interentreprises implicite.
-- **Prérequis avant un pilote externe :** hébergement et exposition HTTPS
-  adaptés, sauvegarde/restauration et étude de protection des données. Le
-  service actuel est privé sur la DevBox ; ce plan n'autorise aucune
-  modification réseau, ouverture publique ou activation de Funnel.
+- **Prérequis avant un pilote externe :** vérifier que l’hébergement et
+  l’exposition HTTPS conviennent au pilote, valider sauvegarde/restauration et
+  protection des données. Le déploiement actuel sur Geekom ne vaut pas
+  validation d’un usage entreprise ; ce dossier n’autorise aucune modification
+  réseau ni nouvelle exposition.
