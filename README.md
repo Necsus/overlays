@@ -107,11 +107,12 @@ L’aperçu CSS utilise des données fictives et ne modifie pas le giveaway rée
 
 Ne jamais versionner, afficher ou partager `.env`, `.tio.tokens.json` ou une clé OBS. `.env.example` est le modèle partageable. PostgreSQL contient les identités, giveaways, participants, gagnants et empreintes des clés OBS ; les tokens Twitch restent hors de la base.
 
-Les sauvegardes PostgreSQL doivent être conservées hors du dépôt et leur restauration vérifiée vers une autre base vide. La procédure reste à définir et valider : voir [ADR-0011](docs/adr/0011-exploitation-durable.md).
+Les sauvegardes PostgreSQL doivent être conservées hors du dépôt et leur restauration vérifiée vers une autre base vide. La procédure reste à définir et valider : voir [WI-0011](docs/todo/WI-0011-exploitation-durable.md).
 
 ## Documentation
 
 - [Déploiement Geekom](docs/DEPLOY.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Roadmap](docs/ROADMAP.md)
+- [Index des WI](docs/INDEX.md)
+- [Template WI](docs/WI-TEMPLATE.md)
 - [Licence MIT](LICENSE)

@@ -2,7 +2,7 @@
 
 Ce document décrit les choix et contraintes de l’existant. L’usage est dans le
 [README](../README.md), les opérations dans [DEPLOY.md](DEPLOY.md) et le travail
-restant dans la [roadmap](ROADMAP.md). Les signatures, routes, constantes et
+restant dans l’[index des WI](INDEX.md). Les signatures, routes, constantes et
 schémas détaillés restent dans le code.
 
 ## Structure et flux
@@ -93,6 +93,22 @@ les pages OBS restent intégrables.
 
 ## Protection des entrées publiques
 
+Le [vhost HTTPS](../nginx/https/default.conf) rejette en `404` les chemins visant
+`.env`, `.git`, `.tio.tokens.json`, leurs suffixes usuels de sauvegarde et les
+fichiers PHP avant tout transfert à l’application. Il limite aussi le débit des
+requêtes transmises par IP vue par Nginx, avec une tolérance aux rafales et un
+refus en `429`. Les seuils sont définis dans le vhost ; la zone mémoire est propre
+à Overlays sur l’hôte partagé.
+
+Le quota Nginx inclut l’ouverture d’un WebSocket, pas ses messages après upgrade.
+Le serveur HTTP conserve le challenge ACME et la redirection HTTPS sans ce quota.
+Les refus du limiteur sont journalisés au niveau `info`, sous le seuil `warn` du
+vhost, pour ne pas ajouter de paramètres OAuth aux journaux. Ce filtrage ne
+remplace ni l’authentification ni une protection contre un DDoS distribué.
+Son activation et sa validation suivent la
+[maintenance du vhost](DEPLOY.md#maintenance-du-vhost-https), pas le seul
+déploiement de l’image.
+
 Les budgets OAuth, sessions et OBS sont bornés **par processus**. Leurs seuils
 sont définis dans `app/application/session.py`, `oauth_state.py`,
 `public_limits.py` et `app/web/websocket.py` ; les recopier ici créerait une
@@ -149,7 +165,7 @@ L’usage et les limites visibles sont décrits dans le
   contrôle d’accès ni une garantie de désindexation.
 - Aucune capacité de 10 000 spectateurs n’est démontrée ; distinguer spectateurs,
   messages reçus et sources OBS connectées. Voir
-  [ADR-0003](adr/0003-stabilisation-charge.md).
+  [WI-0003](todo/WI-0003-stabilisation-charge.md).
 
 Les validations restent ponctuelles et manuelles, sans suite automatisée.
-Leur suivi se trouve dans la roadmap et les ADR ouverts, pas dans ce document.
+Leur suivi se trouve dans l’index et les WI ouverts, pas dans ce document.

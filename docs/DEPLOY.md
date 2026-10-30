@@ -12,10 +12,13 @@ et le vhost HTTPS sont en place. Le déploiement Actions et les sondes internes,
 loopback et HTTPS `/health` et `/` ont réussi. L’accès PostgreSQL LAN avec TLS
 vérifié est validé.
 
+Le durcissement anti-scan du vhost est versionné ; son installation, son
+activation et ses contrôles sur l’hôte restent à effectuer.
+
 Cela ne valide pas les parcours OAuth/OBS ni le renouvellement du certificat
 avec ce vhost. Les vérifications restantes sont suivies dans la
-[roadmap](ROADMAP.md), les sauvegardes dans
-[ADR-0011](adr/0011-exploitation-durable.md).
+[index des WI](INDEX.md), les sauvegardes dans
+[WI-0011](todo/WI-0011-exploitation-durable.md).
 
 ## Prérequis de l’hôte
 
@@ -85,9 +88,24 @@ contiennent des secrets. Les administrateurs Docker ont accès à ces secrets.
 ## Maintenance du vhost HTTPS
 
 Le vhost est déjà installé : ne pas rejouer une première installation ni créer
-un second lien dans `sites-enabled`. Après un changement autorisé, examiner le
-diff avec la version active puis installer le fichier livré. Adapter le chemin
-si `GEEKOM_APP_DIR` diffère :
+un second lien dans `sites-enabled`. La CI livre le fichier sans l’activer : un
+redémarrage ou déploiement du conteneur ne suffit pas à appliquer les
+[protections Nginx](ARCHITECTURE.md#protection-des-entrées-publiques).
+
+Conserver le fichier complet : le `map` et le `limit_req_zone` sont au niveau
+`http`, comme l’inclusion Debian habituelle de `sites-enabled`, pas à l’intérieur
+d’un bloc `server`. Leurs noms sont réservés à Overlays ; ne pas les recopier
+dans un second fichier actif.
+
+Le quota utilise l’IP vue par Nginx. Dans le schéma actuel, Nginx reçoit directement
+les clients. Si un proxy Cloudflare ou un autre intermédiaire est activé,
+confirmer d’abord une restitution fiable de l’IP réelle sur l’hôte : sinon le
+quota s’appliquerait aux IP du proxy et pénaliserait plusieurs utilisateurs.
+Ne jamais faire confiance à un `X-Forwarded-For` arbitraire. Les utilisateurs
+derrière un même NAT partagent aussi le quota.
+
+Après un changement autorisé, examiner le diff avec la version active puis
+installer le fichier livré. Adapter le chemin si `GEEKOM_APP_DIR` diffère :
 
 ```bash
 sudo install -o root -g root -m 0644 \
@@ -137,6 +155,28 @@ Un échec uniquement depuis le LAN peut venir du NAT loopback du routeur.
 Vérifier séparément `/admin`, le callback OAuth et une source OBS avec son
 WebSocket authentifié. Les liens générés doivent être en `https://`. Ne partager
 aucun token ou lien OBS confidentiel.
+
+### Filtrage et limitation Nginx
+
+Après installation, test de syntaxe et rechargement autorisés :
+
+- Vérifier `/`, `/admin`, les ressources statiques et `/health` en HTTPS, puis
+  une connexion OAuth complète et une source OBS authentifiée. Vérifier aussi
+  une reconnexion OBS et la réception d’un nouvel état après ouverture du socket.
+- Vérifier que les chemins fictifs `/.env`, `/production/.env`, `/.env.bak`,
+  `/.git/HEAD`, `/.tio.tokens.json`, `/phpinfo.php` et `/index.php/test` répondent
+  `404`. Utiliser des requêtes `HEAD` sans conserver ni afficher de corps.
+  Un `404` seul ne prouve pas le filtrage par Nginx : confirmer la version du
+  vhost actif et l’absence de ces sondes dans les requêtes reçues par l’application.
+- Sur un environnement isolé, vérifier que les rafales au-delà du budget défini
+  dans le vhost sont refusées en `429`, puis que les requêtes reprennent après
+  récupération du budget. Ne pas lancer de test de charge en production ni sur
+  le callback OAuth. Les messages d’un WebSocket déjà ouvert ne sont pas comptés.
+
+Ces contrôles restent à effectuer sur Nginx et dans les vrais parcours ; une
+relecture des règles ne vaut pas validation du déploiement.
+
+### Renouvellement du certificat
 
 Pour éprouver le renouvellement et son hook avec le vhost TLS actif :
 
