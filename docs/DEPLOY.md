@@ -67,6 +67,14 @@ Une PR vers `main` construit l’image sans la publier. Un push sur `main` lance
 [le workflow de publication et déploiement](../.github/workflows/publish-ghcr.yml).
 Modifier une variable ou un secret GitHub ne le déclenche pas.
 
+Le [Dockerfile](../Dockerfile) utilise un tag glissant : il suit les correctifs
+Python 3.13 et les reconstructions officielles sur Debian 13 (`trixie`), sans
+changer automatiquement de version mineure Python ou de version majeure Debian.
+Les deux workflows construisent avec `docker build --pull` pour récupérer la
+base publiée à jour. Une image déjà construite ou un conteneur démarré ne se met
+pas à jour tout seul : appliquer une nouvelle base nécessite une nouvelle
+construction puis un déploiement autorisé.
+
 Points à connaître avant un déploiement autorisé :
 
 - Une brève interruption est prévue pendant migrations et mise à jour.
