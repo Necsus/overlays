@@ -7,47 +7,32 @@ cadrage, ses arbitrages, ses réalisations et ses preuves.
 
 ## Méthode
 
-La méthode reprend `ai-wi` : une intention vérifiable par fichier, tâches IA
-ordonnées, recette définie dès le cadrage et suivi par livraison. Le
-[docs/WI-TEMPLATE.md](WI-TEMPLATE.md) est la copie du template de référence.
-Conserver exactement ses titres, leur ordre et les colonnes des tableaux.
+La méthode `ai-wi` privilégie des WI courts. Le
+[docs/WI-TEMPLATE.md](WI-TEMPLATE.md) sert d'aide : garder seulement les champs
+utiles, sans imposer de tableaux ni de rubriques vides.
 
-Adaptation locale : `todo/`, `validation/`, `done/`, le template et cet index sont
-directement sous `docs/`, sans dossier intermédiaire `wis/`.
+- Cadrage : objectif, cibles et prérequis essentiels ; accord humain avant
+  exécution ou changement de périmètre. Explorer d'abord les inconnues structurantes.
+- Tâches IA ordonnées et recette humaine exhaustive en checklists : une ligne
+  par action avec critère de réussite. La recette est l'unique liste humaine.
+- Guide proposé dans la conversation au moment d'aborder une tâche humaine,
+  avec accord avant manipulation ; aucun protocole détaillé généré d'avance.
+- Suivi limité à l'état courant, la version utile, une preuve brève et les
+  blocages ouverts. Cocher les résultats réellement obtenus ; relancer les
+  validations concernées après une nouvelle livraison, sans journal historique.
+- Une session d'exécution par WI, revue indépendante et sessions humaines
+  distinctes ; références utiles par liens, sans duplication de contenu.
 
 | Dossier | Usage |
 | --- | --- |
 | `docs/todo/` | Cadrage, approbation humaine, puis exécution autorisée. |
-| `docs/validation/` | Livrable implémenté ; revue indépendante et recette humaine à terminer. |
-| `docs/done/` | Revue conforme, recette réussie, acceptation humaine et intégration réalisées ; historiques importés signalés ci-dessous. |
+| `docs/validation/` | Livrable disponible ; revue et recette à terminer. |
+| `docs/done/` | Revue conforme, recette réussie, acceptation et intégration identifiée. |
 
-L’ID et le nom `WI-XXXX-titre.md` restent stables pendant les déplacements.
-Le prochain ID disponible après ce recadrage est `WI-0014` ; vérifier les
-trois dossiers avant toute attribution.
-
-L’approbation humaine d’un WI fige `Cadrage`. `Suivi` et `Commentaires et
-arbitrages` restent éditables ; une évolution du périmètre appelle un WI
-complémentaire après arbitrage humain. Une inconnue structurante appelle un WI
-préalable d’exploration ou de conception. Les accords de migration et de
-recadrage documentaires n'approuvent ni les cadrages détaillés ni l'exécution
-des travaux futurs.
-
-Une session d’exécution traite un seul WI. La revue utilise une session distincte
-et confronte le livrable au cadrage, aux preuves et aux règles d’architecture.
-Les tâches humaines ont leurs propres sessions. Un blocage conserve le fichier
-dans son dossier et ouvre un commentaire avec le constat et la décision attendue.
-
-À chaque livraison, consigner sa version et les résultats dans `Suivi`, puis
-ajouter une tâche humaine par point de recette. Chaque résultat indique preuve,
-validateur et date. Une nouvelle livraison ajoute des entrées et relance revue
-et recette pour cette version, sans effacer l’historique. La liste globale des
-tâches humaines est la réunion des suivis des WI, pas une seconde liste ici.
-
-Utiliser les IDs des WI et des références identifiées par leur chemin depuis la
-racine du projet ; les liens Markdown sont relatifs au fichier pour rester
-navigables. Les décisions humaines sont datées, attribuées et liées à l’accord
-explicite. Une information absente de l’historique est notée « non consignée »,
-jamais reconstituée comme une preuve.
+ID et nom `WI-XXXX-titre.md` stables ; prochain ID prévu : `WI-0014`, à vérifier
+dans les trois dossiers. Template et index restent directement sous `docs/`.
+Consulter les WI clos ou migrer d'autres WI uniquement sur demande.
+Un accord documentaire n'autorise pas les opérations de recette.
 
 ## Priorités et états
 

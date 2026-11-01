@@ -65,48 +65,29 @@
 
 ## Documentation
 
-- Le code est la source de vérité du comportement. Actualiser la documentation
-  lorsqu'une étape change le fonctionnement, une décision ou l'avancement
-  utile ; ne pas consigner chaque manipulation.
-- Une seule source par information : `README.md` pour l'installation et
-  l'usage, `docs/ARCHITECTURE.md` pour l'existant technique, `docs/DEPLOY.md`
-  pour les opérations et `docs/INDEX.md` comme index du travail. Chaque WI
-  porte son cadrage, son suivi, ses arbitrages et ses preuves.
-- Appliquer la méthode décrite dans `docs/INDEX.md` et copier
-  `docs/WI-TEMPLATE.md` pour chaque nouveau WI. Conserver exactement les titres,
-  leur ordre et les colonnes. Un fichier par intention vérifiable, sous
-  `docs/{todo,validation,done}/WI-XXXX-titre.md` ; ID et nom stables pendant les
-  déplacements. Vérifier les trois dossiers avant d'attribuer un nouvel ID.
-- Préparer un cadrage précis : objectif, cibles, contraintes, dépendances,
-  tâches IA ordonnées et recette humaine définie dès la création. Une inconnue
-  structurante appelle un WI préalable d'exploration ou de conception.
-- L'approbation humaine fige `Cadrage`. Compléter ensuite `Suivi` et
-  `Commentaires et arbitrages` ; une évolution du périmètre appelle un WI
-  complémentaire après arbitrage humain. Un accord de migration documentaire
-  n'approuve ni le cadrage ni l'exécution des WI migrés.
-- Démarrer chaque session avec les instructions du projet, le WI et ses
-  références utiles. Une session d'exécution traite un WI ; la revue utilise
-  une session distincte et vérifie cadrage, preuves et règles d'architecture.
-  Les tâches humaines ont leurs propres sessions.
-- Déplacer le WI de `todo/` vers `validation/` dès livraison du résultat prévu.
-  Consigner version et résultats dans `Suivi`, puis ajouter une tâche humaine
-  par point de recette. Chaque résultat porte preuve, validateur et date ; une
-  nouvelle livraison ajoute des entrées et relance revue et recette pour cette
-  version, sans effacer l'historique. La liste globale des tâches humaines est
-  la réunion des suivis, sans liste parallèle.
-- Conserver un WI bloqué dans son dossier et ouvrir un commentaire avec constat
-  et décision attendue. Dater et attribuer les décisions humaines avec une
-  référence d'accord explicite ; noter les informations historiques absentes
-  comme non consignées plutôt que fabriquer une preuve.
-- Consulter les WI de `docs/done/` uniquement sur demande explicite pour un
-  travail clos. Pendant le travail courant, utiliser l'architecture et les
-  références ouvertes plutôt que parcourir ou suivre les liens vers `done/`.
-- Clôturer dans `done/` après revue conforme, recette réussie, acceptation
-  humaine et intégration identifiée. Reporter l'information durable dans le
-  README, l'architecture ou le guide de déploiement, puis actualiser l'index
-  et les liens. Les historiques importés gardent leurs limites de preuve.
-- Distinguer l'implémenté, le validé et le prévu. Utiliser des références avec
-  chemins depuis la racine du projet et IDs des WI, et des liens Markdown
-  navigables plutôt que dupliquer le contenu.
-- Limiter le compte rendu courant à trois puces : résultat, vérification,
-  décision attendue. Développer les explications à la demande.
+- Écrire le strict nécessaire ; le code reste la source de vérité. Une source
+  par information : README pour l'usage, architecture pour la technique,
+  DEPLOY pour les opérations, INDEX pour le travail.
+- Suivre `docs/INDEX.md` et utiliser `docs/WI-TEMPLATE.md` comme aide, en gardant
+  seulement les champs utiles. Un WI par intention, ID et nom stables sous
+  `docs/{todo,validation,done}/` ; vérifier ces dossiers avant un nouvel ID.
+- Cadrer brièvement objectif, cibles et prérequis ; faire approuver le périmètre
+  avant exécution. Une inconnue structurante appelle une exploration préalable ;
+  un changement de périmètre appelle un nouvel accord.
+- Une session d'exécution par WI, revue indépendante dans une autre session,
+  sessions humaines dédiées ; lire les consignes, le WI et ses références utiles.
+- Tâches IA ordonnées et recette humaine exhaustive en checklists : une ligne
+  par tâche avec action et critère de réussite. La recette est l'unique liste
+  des tâches humaines, sans duplication dans un suivi.
+- Préparer le guide d'une tâche humaine au moment de l'aborder : proposer le
+  plan dans la conversation et attendre l'accord avant toute manipulation.
+- Garder l'état courant, la version utile et une preuve brève de validation ;
+  cocher uniquement un résultat réellement obtenu. Relancer les validations
+  concernées après une nouvelle livraison. Signaler un blocage en une ligne.
+- Éviter historiques, journaux, résumés répétitifs, rubriques vides et listes
+  de fonctionnalités absentes. Utiliser des liens plutôt que recopier les sources.
+- Passer en `validation/` à la livraison, puis en `done/` après revue conforme,
+  recette réussie, acceptation et intégration identifiée ; actualiser les liens.
+  Consulter les WI clos ou migrer d'autres WI uniquement sur demande.
+- Limiter le compte rendu à trois puces : résultat, vérification, décision
+  attendue. Développer seulement à la demande.
