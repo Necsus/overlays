@@ -9,7 +9,9 @@
 Permettre à une entreprise d’envoyer des actions confirmées depuis ses workflows
 vers une API authentifiée et idempotente, puis afficher des compteurs OBS
 persistants par objectif et période. Le service traite des déclarations ; il ne
-détecte ni ne vérifie indépendamment achats ou téléchargements.
+détecte ni ne vérifie indépendamment achats ou téléchargements. Le livrable de
+ce WI est le MVP technique éprouvé sur données fictives et OBS autorisé, pas
+la réalisation d'un pilote commercial externe.
 
 ### Contexte utile
 
@@ -29,7 +31,7 @@ détecte ni ne vérifie indépendamment achats ou téléchargements.
 
 - Cibles proposées : modèle et migration PostgreSQL, réception d’événements,
   service de compteurs, accès OBS de campagne, administration/configuration
-  minimale et documentation du pilote. Les fichiers précis de ces ajouts restent
+  minimale et documentation d'intégration. Les fichiers précis de ces ajouts restent
   à approuver avec le contrat, sans framework générique préalable.
 - Plusieurs objectifs configurables sans changer le code métier : libellé,
   cible, type d’événement et période. Exemples : téléchargement terminé,
@@ -73,8 +75,17 @@ détecte ni ne vérifie indépendamment achats ou téléchargements.
   pilote externe et exposition réseau restent soumis aux accords spécifiques
   d’[AGENTS.md](../../AGENTS.md).
 
-**Extensions conservées comme direction produit, hors première tranche :**
+**Suites conditionnelles conservées, hors livraison de ce WI :**
 
+- Pilote externe, ancienne R05 : après un WI complémentaire et accord dédiés,
+  faire brancher l'appel serveur par une entreprise ; réconcilier ses compteurs,
+  mesurer effort/limites et recueillir le retour du manager/client dans un bilan
+  anonymisé autorisé, avec version, validateur et accord. Cette validation réelle
+  ne bloque pas la clôture technique et n'est jamais déduite de données fictives.
+- Avant ce pilote : besoin/partenaire qualifiés dans WI-0010, contrat WI-0009,
+  isolation WI-0005, restauration WI-0011, supervision WI-0012 et contrôles
+  pertinents WI-0013, protection des données et accord opérationnel explicite.
+  Des réserves dans un WI d'audit doivent être arbitrées, pas assimilées à une conformité.
 - Liens globaux et par streamer vers une destination de campagne validée ;
   clics/visites, inscriptions, installations, actions dans le jeu et valeurs
   cumulées (temps, points, montants avec unité/devise explicite).
@@ -99,12 +110,15 @@ détecte ni ne vérifie indépendamment achats ou téléchargements.
 
 ### Dépendances
 
-Contrat MVP de WI-0009 avant implémentation. Un premier essai fictif ne dépend
-pas de la validation de toutes les pistes produit. Avant pilote externe : besoins
-et partenaire qualifiés dans WI-0010, isolation de
-[WI-0005](../validation/WI-0005-multi-streamer.md), prérequis d’exploitation et
-de protection des données de [WI-0011](WI-0011-exploitation-durable.md), puis
-accord opérationnel explicite.
+Un besoin prioritaire qualifié dans [WI-0010](WI-0010-campagnes-decouverte.md),
+puis le contrat MVP approuvé de [WI-0009](WI-0009-campagnes-integrations.md)
+précèdent l'implémentation. Il n'est pas nécessaire de valider les cinq pistes.
+Sans besoin réalisable, ne pas lancer le code. Les futurs prérequis du pilote
+sont distincts de la livraison technique :
+[WI-0005](../validation/WI-0005-multi-streamer.md),
+[WI-0011](WI-0011-exploitation-durable.md),
+[WI-0012](WI-0012-supervision-metier.md) et
+[WI-0013](WI-0013-controles-post-deploiement.md), plus accords dédiés.
 
 ### Tâches IA
 
@@ -114,8 +128,8 @@ accord opérationnel explicite.
 | T02 | Implémenter l’endpoint versionné et la transaction réception/déduplication/compteur. | Réessais idempotents, conflits refusés et contribution `+1` contrôlée. | Payloads fictifs valides, invalides, répétés et concurrents ; tests nouveaux sur accord. |
 | T03 | Ajouter configuration minimale des attributions, événements et objectifs. | Un partenaire conserve son système et configure les types acceptés sans code métier dédié. | Contrôles isolés des droits et types/références non configurés. |
 | T04 | Ajouter accès OBS indépendant, état initial/reconnexion et mises à jour des compteurs. | Seuls objectifs et agrégats autorisés du bon streamer/campagne sont exposés. | Clés et comptes fictifs de deux entreprises/deux streamers ; aucun secret dans les sorties. |
-| T05 | Documenter l’accès pilote, les erreurs, les réessais et un exemple fictif. | Entreprise capable de brancher son appel serveur et diagnostiquer un rejet. | Relecture du contrat et parcours isolé, sans SDK ou connecteur annexe. |
-| T06 | Préparer la recette du MVP et du passage de période ; consigner les limites avant pilote. | Protocole de redémarrage, déduplication, révocation et isolation. | Contrôles temporaires approuvés ; pilote et rendu OBS réels séparément autorisés. |
+| T05 | Documenter accès d'intégration, erreurs, réessais et exemple fictif. | Contrat exploitable et rejet diagnostiquable sur un émetteur fictif, sans dépendre d'un client réel. | Relecture et parcours isolé, sans SDK ou connecteur annexe. |
+| T06 | Préparer la recette technique, le passage de période et les prérequis du futur pilote. | Protocole de redémarrage, déduplication, révocation et isolation ; suites séparées. | Contrôles temporaires approuvés ; rendu OBS autorisé séparément, aucun pilote exécuté ici. |
 
 ### Recette humaine
 
@@ -125,14 +139,14 @@ accord opérationnel explicite.
 | R02 | Exercer redémarrage, nouvelle période, dates tardives et règles d’unicité convenues. | Totaux retrouvés, historique préservé et bonne période métier. | États avant/après et règles appliquées. |
 | R03 | Avec deux entreprises et deux streamers, essayer références étrangères, accès révoqués et mauvaises clés. | Aucun accès/compteur croisé ; erreurs d’intégration sans panne des autres plugins. | Matrice d’accès, effets constatés et absence de secrets. |
 | R04 | Dans OBS autorisé, charger/reconnecter une source puis appliquer un CSS fictif. | État initial et mises à jour conformes, rendu correct sans calcul client des totaux. | Observation OBS séparée des résultats API. |
-| R05 | Après prérequis et accord externe, faire brancher l’appel serveur par une entreprise pilote. | Compteur réconcilié avec sa source, effort et limites documentés ; retour du manager/client. | Bilan anonymisé autorisé, version, validateur et accord du pilote. |
 
 ## Suivi
 
 ### Approbation du cadrage
 
 En attente du contrat et de l’approbation humaine détaillée. Le MVP entrant est
-la direction retenue ; la migration n’autorise ni réalisation ni pilote.
+la direction retenue ; ni la migration ni le recadrage documentaire n'autorisent
+réalisation ou pilote. Les résultats de WI-0010/WI-0009 sont requis avant le code.
 
 ### Réalisations IA
 
@@ -143,18 +157,20 @@ la direction retenue ; la migration n’autorise ni réalisation ni pilote.
 
 | Livraison | Recette ou prérequis | État | Résultat, preuve, validateur et date |
 | --- | --- | --- | --- |
-| Avant implémentation | Contrat WI-0009 | À approuver | Événements, unicité, période, attribution et règles de correction à figer. |
-| Avant pilote externe | Partenaire et conditions opérationnelles | À autoriser | WI-0005, WI-0010, WI-0011 et accord du pilote requis ; aucune promesse commerciale déduite. |
+| Avant implémentation | Besoin WI-0010 et contrat WI-0009 | À approuver | Cas prioritaire réalisable ; événements, unicité, période, attribution et corrections à figer. |
+| Suite conditionnelle, ancienne R05 | Partenaire et conditions opérationnelles | Hors livraison technique ; à cadrer | WI complémentaire, WI-0005/0010/0011/0012/0013 et accord du pilote requis ; aucune promesse commerciale déduite. |
 
 ### Validation finale
 
-Première tranche terminée quand R01 à R04 passent sur données fictives, puis
-R05 confirme entreprise → API → OBS dans un pilote autorisé. Notre garantie
-porte sur le traitement des déclarations, pas leur réalité commerciale.
-Revue indépendante, acceptation et intégration restent requises pour `done/`.
+Terminé quand R01 à R04 passent avec données fictives et source OBS autorisée,
+après revue indépendante, acceptation et intégration identifiée. La garantie
+porte sur le traitement technique des déclarations, pas leur réalité commerciale.
+L'ancienne R05 est conservée comme pilote conditionnel à cadrer séparément :
+la clôture du MVP ne prouve ni l'intégration d'une entreprise ni la valeur commerciale.
 
 ## Commentaires et arbitrages
 
 | Date | Auteur | Constat et proposition | Décision humaine et référence |
 | --- | --- | --- | --- |
 | 2026-10-30 | Assistant | Les imports/connecteurs et pistes A à E restent des extensions ; aucun remplacement implicite du MVP. | Toute substitution par import ou connecteur nécessite un arbitrage humain et, après gel, un WI complémentaire. |
+| 2026-11-01 | Utilisateur et assistant | Séparer livraison technique et pilote externe ; conserver ancienne R05 et extensions comme suites conditionnelles ; faire précéder le code du besoin WI-0010 et du contrat WI-0009. | Conversation courante : accord « Valider le plan » pour le recadrage documentaire uniquement ; aucun besoin, contrat ou pilote approuvé. |

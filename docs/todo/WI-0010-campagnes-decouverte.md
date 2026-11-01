@@ -6,10 +6,11 @@
 
 ### Objectif
 
-Qualifier avec le manager et une entreprise un pilote concret : objectifs,
-déclencheurs, attribution, périodes, unicité et effort d’appel de l’API. Livrable :
-synthèse anonymisée distinguant besoins confirmés, hypothèses et non-priorités,
-sans développer les cinq parcours ni engager une offre commerciale.
+Décider avec le manager si un cas prioritaire de campagne mérite un pilote :
+objectifs, données, déclencheurs, attribution, périodes, unicité et effort de l'API.
+Livrable : synthèse anonymisée et décision argumentée, positive, négative ou
+inconclusive dans le périmètre exploré. Aucun développement des cinq parcours
+ni engagement commercial n'est requis pour terminer cette exploration.
 
 ### Contexte utile
 
@@ -22,14 +23,18 @@ sans développer les cinq parcours ni engager une offre commerciale.
   hors jeu vidéo, notamment boutiques, avec commandes payées, acheteurs uniques,
   montants cumulés et actions personnalisées. Le mécanisme d’attribution reste
   à confirmer partenaire par partenaire.
-- Les cinq pistes ci-dessous sont exploratoires, peuvent se recouper et ne
-  constituent ni un ordre de développement ni un classement des usages.
+- Les cinq pistes ci-dessous sont conservées comme réservoir d'hypothèses ;
+  elles peuvent se recouper et ne constituent ni un ordre de développement ni
+  cinq enquêtes obligatoires. Choisir un cas prioritaire avec le manager.
 
 ### Périmètre et contraintes
 
 - Cibles : éléments anonymisés fournis avec autorisation, synthèse de découverte
   et décisions dans le suivi du présent WI, propositions aux cadrages non figés
   WI-0008/WI-0009. Aucun connecteur, SDK, portail ou code de campagne ici.
+- Faire approuver le cas prioritaire, les interlocuteurs, éléments partageables,
+  temps/entretiens bornés et conditions d'arrêt. Les autres pistes restent
+  non explorées tant qu'un besoin ne justifie pas de les ouvrir.
 - Reconstituer une collaboration passée avec brief/bilan anonymisés : objectifs,
   engagements streamer, outils, données obtenues, tâches manuelles et décision
   finale. Garder contrats, secrets et données personnelles hors dépôt.
@@ -42,9 +47,13 @@ sans développer les cinq parcours ni engager une offre commerciale.
 - Choisir selon besoin concret, accès aux données, effort et calendrier. Faire
   approuver un exemple fictif de bilan/objectifs OBS avant les connecteurs ;
   séparer aide à la décision entreprise et animation de la communauté.
-- L’exploration des extensions ne bloque pas le MVP entrant. Si l’entreprise
-  ne peut pas envoyer d’événements, étudier l’import comme extension et demander
-  un arbitrage avant toute substitution du MVP.
+- Explorer les cinq extensions n'est pas un prérequis. En revanche, qualifier
+  un besoin réalisable précède le contrat WI-0009 puis le code WI-0008.
+  Si l'entreprise ne peut pas envoyer d'événements, consigner le blocage et
+  proposer l'import comme extension à arbitrer, sans remplacer implicitement le MVP.
+- Une absence de pilote viable ou des données insuffisantes est une conclusion
+  possible si étayée et acceptée ; elle ne démontre pas l'absence de marché et
+  n'autorise pas un contrat ou développement spéculatif.
 - Aucun accès à un compte partenaire, collecte externe, engagement commercial,
   fichier de test/script ou opération réelle n’est autorisé par cette migration.
 
@@ -166,20 +175,23 @@ sans développer les cinq parcours ni engager une offre commerciale.
 
 ### Dépendances
 
-Disponibilité du manager et d’un partenaire, autorisation des éléments
-anonymisés. Aucun développement des cinq parcours ni clôture technique de
-WI-0008/WI-0009 n’est nécessaire pour commencer les entretiens.
+Disponibilité du manager, périmètre d'entretien borné et éléments anonymisés
+autorisés. Associer un partenaire/intégrateur quand accessible ; si l'accès ou
+les données manquent, conclure explicitement dans ce périmètre au lieu d'inventer
+une validation. Aucun développement ni clôture WI-0008/WI-0009 n'est requis.
+Une décision positive fournit leurs prérequis ; une décision négative ou
+inconclusive maintient leur exécution en attente d'un nouvel arbitrage.
 
 ### Tâches IA
 
 | ID | Action et cible | Résultat attendu | Vérification autorisée |
 | --- | --- | --- | --- |
-| T01 | Préparer une grille de reconstitution d’une collaboration et des questions par interlocuteur dans le suivi. | Objectif, outils, données, travail manuel et décision documentables. | Revue documentaire, exemples fictifs seulement. |
+| T01 | Faire choisir un cas prioritaire et préparer grille, interlocuteurs, budget et arrêt de l'exploration. | Protocole borné pour objectifs, données, travail manuel et décision ; pas cinq parcours obligatoires. | Revue documentaire et exemples fictifs ; entretiens/éléments seulement après autorisation. |
 | T02 | Analyser les éléments anonymisés explicitement fournis et autorisés. | Synthèse sourcée, manques et contradictions visibles, sans données personnelles. | Contrôle de provenance et de minimisation ; aucun contrat ou secret réel lu. |
-| T03 | Structurer les retours des catégories effectivement interrogées. | Hypothèses, confirmés, non-priorités et non-explorés clairement distincts. | Confrontation aux retours humains autorisés, sans étude de marché inventée. |
-| T04 | Comparer les candidats selon besoin, données, effort et calendrier. | Proposition de pilote et inconnues structurantes à arbitrer. | Revue documentaire avec manager ; aucun choix client pris à sa place. |
-| T05 | Préparer un bilan et des objectifs OBS fictifs, puis formaliser les décisions du pilote. | Déclencheurs, attribution, périodes, unicité et effort d’API approuvables. | Validation humaine des maquettes ; aucune intégration ni appel réel. |
-| T06 | Reporter les arbitrages autorisés aux cadrages WI-0008/WI-0009 non figés et consigner les extensions séparément. | MVP préservé et suites identifiées sans engagement commercial implicite. | Relecture des périmètres et références d’accord ; WI complémentaire après gel. |
+| T03 | Structurer les retours du cas retenu et des seuls interlocuteurs effectivement interrogés. | Hypothèses, confirmés, non-priorités et non-explorés distincts, avec manques visibles. | Confrontation aux retours humains autorisés, sans étude de marché inventée. |
+| T04 | Évaluer besoin, données, effort et calendrier ; comparer d'autres candidats seulement si utile au périmètre approuvé. | Décision proposée : pilote viable, non viable ou conclusion insuffisante ; motifs et inconnues explicites. | Revue avec manager ; aucun choix client pris à sa place. |
+| T05 | Si le cas est viable, préparer bilan/objectifs OBS fictifs ; sinon formaliser les raisons et conditions de réouverture. | Décision humaine approuvable, sans maquette ou partenaire obligatoire pour un résultat négatif. | Validation des maquettes ou de la synthèse négative/inconclusive ; aucun appel réel. |
+| T06 | Reporter la décision autorisée aux cadrages non figés WI-0008/WI-0009 et conserver les autres pistes. | MVP préservé ; code/contrat débloqués seulement après besoin qualifié et accords, sinon report explicite. | Relecture des périmètres et références d'accord ; WI complémentaire après gel. |
 
 ### Recette humaine
 
@@ -187,8 +199,8 @@ WI-0008/WI-0009 n’est nécessaire pour commencer les entretiens.
 | --- | --- | --- | --- |
 | R01 | Avec le manager, reconstruire une collaboration depuis des éléments anonymisés autorisés. | Problème, travail manuel, données et décision finale explicités. | Synthèse anonymisée approuvée, validateur et date. |
 | R02 | Interroger progressivement les interlocuteurs utiles et relire leur synthèse. | Besoins et contradictions distingués des hypothèses ; catégories non explorées signalées. | Retours autorisés et classement approuvé, sans preuve de marché généralisée. |
-| R03 | Choisir un pilote et définir objectifs, déclencheurs, attribution, périodes, unicité et effort de l’appel serveur. | Partenaire et périmètre réalisables, ou blocage explicite demandant un arbitrage. | Décision manager/entreprise et référence de l’accord. |
-| R04 | Faire relire bilan/objectifs fictifs et limites de l’offre. | Utilité bilan/OBS distincte, effort et éventuelles conditions commerciales explicitement décidés. | Retours et acceptation du pilote ; aucune tarification inventée. |
+| R03 | Décider si un pilote est réalisable ; si oui préciser partenaire, objectifs, déclencheurs, attribution, périodes, unicité et effort serveur. | Cas viable qualifié, ou conclusion négative/inconclusive bornée et motivée ; aucune étude généralisée. | Décision du manager et du partenaire si impliqué, motifs et référence de l'accord. |
+| R04 | Relire bilan/objectifs fictifs si pertinents, sinon la synthèse et les conditions de réouverture. | Résultat positif, négatif ou inconclusif accepté ; utilité/effort et limites de l'offre explicites sans engagement tacite. | Retours et acceptation humaine du livrable ; aucune tarification ou validation partenaire inventée. |
 
 ## Suivi
 
@@ -196,7 +208,8 @@ WI-0008/WI-0009 n’est nécessaire pour commencer les entretiens.
 
 En attente de validation humaine du protocole d’exploration. Les besoins
 explicitement exprimés sont conservés, sans qualifier les autres hypothèses de
-validées ni approuver des engagements commerciaux.
+validées ni approuver des engagements commerciaux. L'accord de recadrage
+documentaire n'autorise ni entretiens, ni collecte, ni exécution de l'exploration.
 
 ### Réalisations IA
 
@@ -207,17 +220,21 @@ validées ni approuver des engagements commerciaux.
 
 | Livraison | Recette ou prérequis | État | Résultat, preuve, validateur et date |
 | --- | --- | --- | --- |
-| Avant exploration | Interlocuteurs et éléments anonymisés | À autoriser | Manager, partenaire et documents partageables à identifier ; aucun entretien réalisé par la migration. |
+| Avant exploration | Cas, interlocuteurs, budget et éléments anonymisés | À autoriser | Manager, éventuel partenaire, documents partageables et conditions d'arrêt à identifier ; aucun entretien réalisé par le recadrage. |
 
 ### Validation finale
 
-Terminé lorsque manager et entreprise pilote ont confirmé les paramètres de
-R03 et relu le livrable, avec revue indépendante, acceptation et intégration
-identifiée. Ce résultat ne valide ni tous les segments ni le fonctionnement de
-l’API. Une alternative par import attend un arbitrage explicite.
+Terminé lorsque la synthèse, ses preuves et la décision R03/R04 sont revues,
+acceptées et intégrées : pilote viable qualifié, ou absence de pilote viable /
+résultat inconclusif explicitement borné. La validation du partenaire est requise
+pour les affirmations qui lui sont attribuées, pas pour inventer un partenaire
+à une conclusion négative. Ce résultat ne valide ni tous les segments ni l'API.
+Un résultat négatif/inconclusif ne débloque pas WI-0009/WI-0008. Une alternative
+par import attend toujours un arbitrage explicite.
 
 ## Commentaires et arbitrages
 
 | Date | Auteur | Constat et proposition | Décision humaine et référence |
 | --- | --- | --- | --- |
 | 2026-10-30 | Assistant | Conserver les cinq pistes et le besoin boutique sans transformer la découverte en développement de connecteurs. | Cadrage d’exploration à approuver ; aucun changement du MVP autorisé par la migration. |
+| 2026-11-01 | Utilisateur et assistant | Explorer un cas prioritaire et permettre une conclusion négative/inconclusive acceptée ; conserver les cinq pistes sans les rendre obligatoires. | Conversation courante : accord « Valider le plan » pour le recadrage documentaire uniquement ; aucune étude ou décision de pilote réalisée. |
